@@ -130,12 +130,32 @@ The new account must change its password at first sign-in.
 | 422 | The initial password fails the password policy, or a field is missing. |
 
 ### `PATCH /api/members/{id}` 🔒 `members.view`
-`{"role": "member" | "team_leader", "role_bundle_ids": [1, 2]}` → `200` with the member. Both fields are optional, and an omitted field is left unchanged. `role_bundle_ids` replaces the member's whole set.
+```json
+{"full_name": "…", "email": "…", "team_id": 2, "is_active": false, "new_password": "…",
+ "role": "member" | "team_leader", "role_bundle_ids": [1, 2]}
+```
+→ `200` with the member.
+
+- **All fields are optional;** an omitted field is left unchanged.
+- **`role_bundle_ids`** replaces the member's whole set.
+- **`new_password`** sets a new initial password that the member must change at their next sign-in.
+- **Sign-out:** changing `email`, setting `new_password` or setting `is_active: false` revokes the member's sessions. An email change also invalidates their device signatures, because the email is part of every signature.
 
 | Status | When |
 |---|---|
-| 403 | Any of these: the target is the Owner; a non-owner changed `role`; a bundle change without `members.assign_roles`; a bundle changed (added or removed) that contains a permission the caller lacks; or a target outside the caller's own team's plain members. |
-| 404 | The member or a role bundle doesn't exist. |
+| 403 | The caller lacks the permission for the change: `members.edit` for details, the Owner for `team_id` and `role`, or `members.assign_roles` plus every permission in each bundle added or removed. Also returned for a target outside a non-owner's own team's plain members, or for bundle changes on the Owner. |
+| 404 | The member, team or a role bundle doesn't exist. |
+| 409 | The new email is already registered. |
+| 422 | `new_password` fails the policy, or someone tried to disable themselves, set their own password, or put the Owner in a team. |
+
+### `DELETE /api/members/{id}` 🔒 `members.delete`
+`200 {"message": "Member deleted."}`. The account is deleted along with its device binding, sessions and role bundle assignments. The audit log records the deleted email and name.
+
+| Status | When |
+|---|---|
+| 403 | The target is outside a non-owner's own team's plain members. |
+| 404 | The member doesn't exist. |
+| 422 | The target is the Owner. |
 
 ### `POST /api/members/{id}/reset-device` 🔒 `members.reset_device`
 `200` with the member. The member's computer is unbound and their sessions end; their next sign-in binds the computer it's made from.

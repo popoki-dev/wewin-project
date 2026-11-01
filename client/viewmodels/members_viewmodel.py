@@ -28,6 +28,8 @@ class MembersViewModel(QObject):
     teamRenamed = Signal(str)
     bundleSaved = Signal()
     memberRolesSaved = Signal()
+    memberSaved = Signal()
+    memberDeleted = Signal()
 
     def __init__(self, auth: AuthViewModel, api: MembersApi, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -82,6 +84,25 @@ class MembersViewModel(QObject):
             and member.get("team_id") == self._auth.userTeamId
             and member.get("email") != self._auth.userEmail
         )
+
+    def _in_my_scope(self, member: dict, permission: str) -> bool:
+        """Non-owners act only on plain members of their own team, never themselves."""
+        return (
+            self._auth.has(permission)
+            and member.get("role") == "member"
+            and member.get("team_id") == self._auth.userTeamId
+            and member.get("email") != self._auth.userEmail
+        )
+
+    @Slot("QVariant", result=bool)
+    def canEditMember(self, member: dict) -> bool:
+        return self._auth.isOwner or self._in_my_scope(member, "members.edit")
+
+    @Slot("QVariant", result=bool)
+    def canDeleteMember(self, member: dict) -> bool:
+        if member.get("role") == "owner":
+            return False
+        return self._auth.isOwner or self._in_my_scope(member, "members.delete")
 
     @Slot("QVariant", result=bool)
     def canResetDevice(self, member: dict) -> bool:
@@ -261,6 +282,54 @@ class MembersViewModel(QObject):
             self.refresh()
 
         self._call(self._api.update_member, user_id, body, on_ok=saved)
+
+    @Slot("QVariant", str, str, int, bool, str)
+    def saveMember(
+        self, member: dict, full_name: str, email: str, team_id: int, is_active: bool, new_password: str
+    ) -> None:
+        """Send only what changed. `team_id` 0 and an empty `new_password` mean "leave as is"."""
+        email = email.strip().lower()
+        if not _EMAIL_RE.match(email):
+            self._set_state(False, "Enter a valid email address.", ["email"])
+            return
+        body: dict = {}
+        if full_name.strip() != member.get("full_name", ""):
+            body["full_name"] = full_name.strip()
+        if email != member.get("email"):
+            body["email"] = email
+        if team_id > 0 and team_id != member.get("team_id") and self._auth.isOwner:
+            body["team_id"] = team_id
+        if is_active != member.get("is_active", True):
+            body["is_active"] = is_active
+        if new_password:
+            body["new_password"] = new_password
+        if not body:
+            self.memberSaved.emit()
+            return
+        own_email_changed = member.get("email") == self._auth.userEmail and "email" in body
+
+        def saved(updated: dict) -> None:
+            self.memberSaved.emit()
+            if own_email_changed:
+                # Requests are signed with the email, so this session cannot continue.
+                self._auth.sign_out_with_message(f"Your email is now {updated['email']}. Sign in with it.")
+                return
+            self._set_state(False, notice=f"Saved changes to {updated['email']}.")
+            self.refresh()
+
+        self._call(
+            self._api.update_member, member["id"], body, on_ok=saved,
+            fields_by_status={409: ["email"], 404: ["team"], 422: ["password"]},
+        )
+
+    @Slot("QVariant")
+    def deleteMember(self, member: dict) -> None:
+        def deleted(_: dict) -> None:
+            self.memberDeleted.emit()
+            self._set_state(False, notice=f"{member['email']} was deleted.")
+            self.refresh()
+
+        self._call(self._api.delete_member, member["id"], on_ok=deleted)
 
     # -------------------------------------------------------- role bundles
     def _bundle_body(self, name: str, description: str, permissions: list) -> dict | None:

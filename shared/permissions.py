@@ -15,6 +15,8 @@ from .enums import Role
 class Permission(str, enum.Enum):
     MEMBERS_VIEW = "members.view"
     MEMBERS_ADD = "members.add"
+    MEMBERS_EDIT = "members.edit"
+    MEMBERS_DELETE = "members.delete"
     MEMBERS_RESET_DEVICE = "members.reset_device"
     MEMBERS_ASSIGN_ROLES = "members.assign_roles"
     TEAMS_CREATE = "teams.create"
@@ -32,6 +34,9 @@ CATALOG: list[tuple[str, list[tuple[Permission, str, str]]]] = [
     ("Members", [
         (Permission.MEMBERS_VIEW, "View members", "See the members of their team."),
         (Permission.MEMBERS_ADD, "Add members", "Add plain members to their team."),
+        (Permission.MEMBERS_EDIT, "Edit members",
+         "Change team members' name, email and active status, or set a new initial password."),
+        (Permission.MEMBERS_DELETE, "Delete members", "Delete team members' accounts."),
         (Permission.MEMBERS_RESET_DEVICE, "Reset devices", "Release a team member's computer binding."),
         (Permission.MEMBERS_ASSIGN_ROLES, "Assign role bundles",
          "Give or take role bundles from team members, limited to permissions they hold."),
@@ -56,6 +61,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.TEAM_LEADER: frozenset({
         Permission.MEMBERS_VIEW,
         Permission.MEMBERS_ADD,
+        Permission.MEMBERS_EDIT,
+        Permission.MEMBERS_DELETE,
         Permission.MEMBERS_RESET_DEVICE,
         Permission.MEMBERS_ASSIGN_ROLES,
         Permission.PROJECTS_VIEW,
@@ -70,6 +77,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
 # Any Members permission is useless without seeing the members it applies to.
 _IMPLIED = {
     Permission.MEMBERS_ADD: Permission.MEMBERS_VIEW,
+    Permission.MEMBERS_EDIT: Permission.MEMBERS_VIEW,
+    Permission.MEMBERS_DELETE: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_RESET_DEVICE: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_ASSIGN_ROLES: Permission.MEMBERS_VIEW,
 }

@@ -34,11 +34,13 @@ class FakeMembersApi:
     def create_bundle(self, server, token, body, cb): self._answer("create_bundle", cb, body)
     def update_bundle(self, server, token, bundle_id, body, cb): self._answer("update_bundle", cb, bundle_id, body)
     def delete_bundle(self, server, token, bundle_id, cb): self._answer("delete_bundle", cb, bundle_id)
+    def delete_member(self, server, token, user_id, cb): self._answer("delete_member", cb, user_id)
 
 
 ROLE_PERMISSIONS = {
     "owner": ["members.add", "members.assign_roles", "members.reset_device", "members.view", "teams.create"],
-    "team_leader": ["members.add", "members.assign_roles", "members.reset_device", "members.view", "revenue.view"],
+    "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.reset_device",
+                    "members.view", "revenue.view"],
     "member": ["projects.view"],
 }
 
@@ -157,3 +159,60 @@ def test_saving_member_roles_sends_base_role_only_for_the_owner(tmp_path, monkey
     api.results["update_member"] = ApiResult(True, 200, {"email": "m@b.co"})
     leader.saveMemberRoles(5, "team_leader", [1])
     assert api.calls[0] == ("update_member", 5, {"role_bundle_ids": [1]})
+
+
+SAM = {"id": 5, "email": "sam@b.co", "full_name": "Sam", "role": "member", "team_id": 7, "is_active": True}
+
+
+def test_save_member_sends_only_changes(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "full_name": "Samuel"})
+    vm.saveMember(SAM, "Samuel ", " Sam@B.co ", 7, True, "")
+    assert api.calls[0] == ("update_member", 5, {"full_name": "Samuel"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", 9, False, "Fresh-pass-3")
+    updates = [c for c in api.calls if c[0] == "update_member"]
+    assert updates[-1] == ("update_member", 5, {"team_id": 9, "is_active": False, "new_password": "Fresh-pass-3"})
+
+
+def test_save_member_validates_email(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    vm.saveMember(SAM, "Sam", "not-an-email", 7, True, "")
+    assert vm.errorFields == ["email"] and api.calls == []
+
+
+def test_team_leader_cannot_move_members(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader")
+    api.results["update_member"] = ApiResult(True, 200, SAM)
+    vm.saveMember(SAM, "Sammy", "sam@b.co", 9, True, "")
+    assert api.calls[0] == ("update_member", 5, {"full_name": "Sammy"})
+
+
+def test_who_can_edit_and_delete_whom(tmp_path, monkeypatch):
+    owner, _ = signed_in(tmp_path, monkeypatch, "owner")
+    assert owner.canEditMember({"role": "owner", "email": "admin9531@gmail.com"})
+    assert not owner.canDeleteMember({"role": "owner"})
+    assert owner.canDeleteMember({**SAM, "team_id": 99})
+
+    leader, _ = signed_in(tmp_path, monkeypatch, "team_leader")
+    assert leader.canEditMember(SAM) and leader.canDeleteMember(SAM)
+    assert not leader.canEditMember({**SAM, "team_id": 99})
+    assert not leader.canDeleteMember({**SAM, "role": "team_leader"})
+
+    member, _ = signed_in(tmp_path, monkeypatch, "member")
+    assert not member.canEditMember(SAM) and not member.canDeleteMember(SAM)
+
+
+def test_changing_own_email_signs_out(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    me = {"id": 1, "email": "admin9531@gmail.com", "full_name": "Owner", "role": "owner", "team_id": None,
+          "is_active": True}
+    api.results["update_member"] = ApiResult(True, 200, {**me, "email": "boss@b.co"})
+    vm.saveMember(me, "Owner", "boss@b.co", 0, True, "")
+    assert not vm._auth.loggedIn and "boss@b.co" in vm._auth.errorMessage
+
+
+def test_delete_member(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["delete_member"] = ApiResult(True, 200, {"message": "Member deleted."})
+    vm.deleteMember(SAM)
+    assert api.calls[0] == ("delete_member", 5) and "sam@b.co" in vm.notice
