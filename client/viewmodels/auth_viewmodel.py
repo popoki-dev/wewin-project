@@ -15,6 +15,10 @@ from shared.device_signature import signed_headers
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SESSION_EXPIRED = "Your session has expired. Please sign in again."
 SERVER_POLL_MS = 5_000
+# While signed in, this many failed server checks in a row (one every SERVER_POLL_MS)
+# end the session; one dropped request alone does not.
+MAX_MISSED_HEARTBEATS = 2
+CONNECTION_LOST = "Lost connection to the server, so you were signed out. Sign in again once it is reachable."
 
 
 class AuthViewModel(QObject):
@@ -53,6 +57,8 @@ class AuthViewModel(QObject):
         self._server_check_seq = 0
         self._checked_server = ""
         self._probe_pending = False
+        self._heartbeat_pending = False
+        self._missed_heartbeats = 0
 
         self._server = ""
         self._access_token = ""
@@ -68,7 +74,8 @@ class AuthViewModel(QObject):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self._refresh_access_token)
 
-        # Keeps the sign-in page's server status current after the first check.
+        # Keeps the sign-in page's server status current after the first check, and
+        # while signed in, checks the connection so a lost server ends the session.
         self._server_poll = QTimer(self)
         self._server_poll.setInterval(SERVER_POLL_MS)
         self._server_poll.timeout.connect(self._poll_server)
@@ -244,10 +251,14 @@ class AuthViewModel(QObject):
         # Renew the access token a minute before it expires.
         expires_in = int(data.get("expires_in", 1800))
         self._refresh_timer.start(max(30, expires_in - 60) * 1000)
+        self._missed_heartbeats = 0
+        if not self._server_poll.isActive():
+            self._server_poll.start()
         self.sessionChanged.emit()
 
     def _end_session(self) -> None:
         self._refresh_timer.stop()
+        self._missed_heartbeats = 0
         email = self._user.get("email", "")
         self._storage.clear_refresh_token(self._server, email)
         self._storage.clear_device_secret(self._server, email)
@@ -272,11 +283,43 @@ class AuthViewModel(QObject):
         self._server_poll.start()
 
     def _poll_server(self) -> None:
+        if self._access_token:
+            self._heartbeat()
+            return
         # Re-check quietly (no "checking" state) while the sign-in page is shown,
         # and never stack requests behind a server that is slow to answer.
-        if self._access_token or self._probe_pending or not self._checked_server:
+        if self._probe_pending or not self._checked_server:
             return
         self._probe_server()
+
+    def _heartbeat(self) -> None:
+        """While signed in: sign out after MAX_MISSED_HEARTBEATS failed checks in a row."""
+        if self._heartbeat_pending:
+            return
+        self._heartbeat_pending = True
+        server, token = self._server, self._access_token
+
+        def done(result: ApiResult) -> None:
+            self._heartbeat_pending = False
+            if token != self._access_token or server != self._server:
+                return  # signed out, or the session moved on, meanwhile
+            if result.ok and result.data.get("app") == APP_ID:
+                self._missed_heartbeats = 0
+                self._set_server_status("online")
+                return
+            self._missed_heartbeats += 1
+            if self._missed_heartbeats >= MAX_MISSED_HEARTBEATS:
+                self._lose_connection()
+
+        self._api.health(server, done)
+
+    def _lose_connection(self) -> None:
+        """End the session locally; the server cannot be told, but its tokens expire on their own."""
+        self._end_session()
+        self._set_server_status("offline")
+        # Not a "connection" error: it explains why the user is back on the sign-in page,
+        # so it stays until they sign in again rather than vanishing when the server returns.
+        self._set_error(CONNECTION_LOST)
 
     def _probe_server(self) -> None:
         seq = self._server_check_seq
@@ -361,7 +404,7 @@ class AuthViewModel(QObject):
             if result.ok:
                 self._start_session(server, result.data, remember)
             elif result.status == 0:
-                self._refresh_timer.start(30_000)  # offline: retry shortly
+                self._lose_connection()
             else:
                 self._end_session()
                 self._set_error(SESSION_EXPIRED)

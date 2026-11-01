@@ -225,14 +225,13 @@ def test_reset_errors_clear_when_their_field_is_edited(storage, api):
     assert vm.resetError == ""
 
 
-def test_server_is_not_polled_while_signed_in(storage, api):
+def test_signed_in_poll_checks_the_session_server(storage, api):
     api.results["login"] = ApiResult(True, 200, TOKENS)
     vm = make_vm(storage, api)
-    vm.checkServer("localhost:8000")
+    vm.checkServer("other.example.com")  # what the sign-in field last held
     vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
-    calls = len(api.calls)
     vm._poll_server()
-    assert len(api.calls) == calls
+    assert api.calls[-1] == ("health", "http://localhost:8000")
 
 
 def test_signed_in_requests_are_signed_with_the_device_secret(storage, api):
@@ -298,3 +297,72 @@ def test_initial_password_must_be_changed(storage, api):
     assert not vm.mustChangePassword and vm.errorMessage == ""
     assert api.calls[-1] == ("change_password", "http://localhost:8000", "access", "Initial-1", "New-pass-1", False)
     assert api.signer("GET", "/x")[ds.DEVICE_HEADER] == DEVICE_ID  # still signing with secret-1
+
+
+OFFLINE = ApiResult(False, 0, {}, "Could not reach the server.")
+ONLINE = ApiResult(True, 200, {"app": "WeWin"})
+
+
+def signed_in_vm(storage, api, remember=False):
+    api.results["login"] = ApiResult(True, 200, TOKENS)
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", remember)
+    return vm
+
+
+def test_lost_connection_signs_out_after_repeated_failures(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    api.results["health"] = OFFLINE
+    vm._poll_server()
+    assert vm.loggedIn  # one dropped check is tolerated
+    vm._poll_server()
+    assert not vm.loggedIn
+    assert "Lost connection" in vm.errorMessage and vm.serverStatus == "offline"
+    assert api.signer is None
+    # Nothing that could resume the session is left behind.
+    assert storage.load_refresh_token("http://localhost:8000", "admin9531@gmail.com") == ""
+    assert storage.load_device_secret("http://localhost:8000", "admin9531@gmail.com") == ""
+
+
+def test_a_successful_check_resets_the_count(storage, api):
+    vm = signed_in_vm(storage, api)
+    api.results["health"] = OFFLINE
+    vm._poll_server()
+    api.results["health"] = ONLINE
+    vm._poll_server()
+    api.results["health"] = OFFLINE
+    vm._poll_server()
+    assert vm.loggedIn
+
+
+def test_error_responses_count_as_lost_connection(storage, api):
+    vm = signed_in_vm(storage, api)
+    api.results["health"] = ApiResult(False, 502, {}, "Request failed (HTTP 502).")  # proxy up, server down
+    vm._poll_server()
+    vm._poll_server()
+    assert not vm.loggedIn
+
+
+def test_heartbeat_runs_after_a_restored_session(storage, api):
+    signed_in_vm(storage, api, remember=True)
+    api.results["refresh"] = ApiResult(True, 200, {**TOKENS, "device_secret": None})
+    restored = make_vm(storage, api)
+    restored.restoreSession()
+    assert restored.loggedIn and restored._server_poll.isActive()
+
+
+def test_unreachable_server_during_token_refresh_signs_out(storage, api):
+    vm = signed_in_vm(storage, api)
+    api.results["refresh"] = OFFLINE
+    vm._refresh_access_token()
+    assert not vm.loggedIn and "Lost connection" in vm.errorMessage
+
+
+def test_lost_connection_message_stays_when_server_returns(storage, api):
+    vm = signed_in_vm(storage, api)
+    api.results["health"] = OFFLINE
+    vm._poll_server()
+    vm._poll_server()
+    api.results["health"] = ONLINE
+    vm.checkServer("localhost:8000")
+    assert vm.serverStatus == "online" and "Lost connection" in vm.errorMessage
