@@ -131,3 +131,93 @@ def test_insecure_remote_server_is_flagged(storage, api):
     assert vm.serverStatus == "online" and vm.serverInsecure
     vm.checkServer("wewin.example.com")
     assert not vm.serverInsecure
+
+
+def test_server_status_follows_the_server_going_down_and_up(storage, api):
+    api.results["health"] = ApiResult(True, 200, {"app": "WeWin"})
+    vm = make_vm(storage, api)
+    vm.checkServer("localhost:8000")
+    assert vm.serverStatus == "online"
+
+    api.results["health"] = ApiResult(False, 0, {}, "Could not reach the server.")
+    vm._poll_server()
+    assert vm.serverStatus == "offline"
+
+    api.results["health"] = ApiResult(True, 200, {"app": "WeWin"})
+    vm._poll_server()
+    assert vm.serverStatus == "online"
+    assert api.calls[-1] == ("health", "http://localhost:8000")
+
+
+def test_connection_error_clears_when_server_is_back(storage, api):
+    api.results["login"] = ApiResult(False, 0, {}, "Could not reach the server.")
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    assert vm.errorMessage == "Could not reach the server."
+
+    api.results["health"] = ApiResult(True, 200, {"app": "WeWin"})
+    vm.checkServer("localhost:8000")
+    assert vm.serverStatus == "online" and vm.errorMessage == ""
+
+
+def test_other_errors_stay_when_server_is_back(storage, api):
+    api.results["login"] = ApiResult(False, 401, {}, "Invalid email or password.")
+    api.results["health"] = ApiResult(True, 200, {"app": "WeWin"})
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    vm.checkServer("localhost:8000")
+    assert vm.errorMessage == "Invalid email or password."
+
+
+def test_input_error_clears_when_its_field_is_edited(storage, api):
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "a@b.co", "", False)
+    assert vm.errorMessage == "Enter your password." and vm.errorFields == ["password"]
+    vm.fieldEdited("email")
+    assert vm.errorMessage == "Enter your password."
+    vm.fieldEdited("password")
+    assert vm.errorMessage == "" and vm.errorFields == []
+
+
+def test_wrong_credentials_clear_when_email_or_password_is_edited(storage, api):
+    api.results["login"] = ApiResult(False, 401, {}, "Invalid email or password.")
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    vm.fieldEdited("server")
+    assert vm.errorMessage == "Invalid email or password."
+    vm.fieldEdited("email")
+    assert vm.errorMessage == ""
+
+
+def test_lockout_message_is_not_cleared_by_typing(storage, api):
+    api.results["login"] = ApiResult(False, 429, {}, "Too many failed attempts.")
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    vm.fieldEdited("password")
+    assert vm.errorMessage == "Too many failed attempts."
+
+
+def test_reset_errors_clear_when_their_field_is_edited(storage, api):
+    vm = make_vm(storage, api)
+    vm.resetPassword("localhost:8000", "a@b.co", "123456", "Pw-123456", "different")
+    assert vm.resetErrorFields == ["newPassword", "confirm"]
+    vm.resetFieldEdited("code")
+    assert vm.resetError == "The passwords do not match."
+    vm.resetFieldEdited("confirm")
+    assert vm.resetError == ""
+
+    api.results["reset_password"] = ApiResult(False, 400, {}, "The reset code is invalid or has expired.")
+    vm.resetPassword("localhost:8000", "a@b.co", "123456", "Pw-123456", "Pw-123456")
+    assert vm.resetErrorFields == ["code"]
+    vm.resetFieldEdited("code")
+    assert vm.resetError == ""
+
+
+def test_server_is_not_polled_while_signed_in(storage, api):
+    api.results["login"] = ApiResult(True, 200, TOKENS)
+    vm = make_vm(storage, api)
+    vm.checkServer("localhost:8000")
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    calls = len(api.calls)
+    vm._poll_server()
+    assert len(api.calls) == calls
