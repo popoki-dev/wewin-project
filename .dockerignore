@@ -1,0 +1,6 @@
+# Only server/ and shared/ go into the server image.
+*
+!server/
+!shared/
+!deployment/entrypoint.sh
+**/__pycache__

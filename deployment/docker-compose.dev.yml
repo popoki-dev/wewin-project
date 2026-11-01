@@ -1,0 +1,24 @@
+# Local development database only:
+#   docker compose -f deployment/docker-compose.dev.yml up -d
+# Listens on 127.0.0.1:5433, matching the server's default WEWIN_DATABASE_URL.
+name: wewin-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wewin
+      POSTGRES_USER: wewin
+      POSTGRES_PASSWORD: wewin
+    ports:
+      - "127.0.0.1:${WEWIN_DEV_DB_PORT:-5433}:5432"
+    volumes:
+      - wewin-dev-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wewin -d wewin"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  wewin-dev-db:

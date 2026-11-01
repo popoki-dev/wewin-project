@@ -1,0 +1,24 @@
+# Caddy obtains and renews a Let's Encrypt certificate for WEWIN_DOMAIN automatically.
+# The domain's DNS A/AAAA record must point at this server, with ports 80 and 443 open.
+{$WEWIN_DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 2MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy server:8000
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,85 @@
+# Production stack: PostgreSQL + WeWin API + Caddy (automatic HTTPS) + nightly backups.
+#
+#   cd deployment
+#   cp .env.example .env    # then edit it
+#   docker compose up -d --build
+name: wewin
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wewin
+      POSTGRES_USER: wewin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deployment/.env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wewin -d wewin"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    image: wewin-server:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WEWIN_ENVIRONMENT: production
+      WEWIN_DATABASE_URL: postgresql+psycopg://wewin:${POSTGRES_PASSWORD}@db:5432/wewin
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${WEWIN_HTTP_PORT:-80}:80"
+      - "${WEWIN_HTTPS_PORT:-443}:443"
+      - "${WEWIN_HTTPS_PORT:-443}:443/udp"
+    environment:
+      WEWIN_DOMAIN: ${WEWIN_DOMAIN:?Set WEWIN_DOMAIN in deployment/.env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+    networks: [internal, public]
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: wewin
+      PGDATABASE: wewin
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backup:/backup-scripts:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/bin/sh", "/backup-scripts/backup-loop.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+networks:
+  internal:
+    internal: true   # no direct internet access for db/server/backup
+  public: {}
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

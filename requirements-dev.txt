@@ -1,0 +1,4 @@
+-r server/requirements.txt
+-r client/requirements.txt
+pytest>=8
+httpx>=0.27
