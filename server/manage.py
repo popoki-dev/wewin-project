@@ -15,7 +15,7 @@ from alembic.config import Config
 
 from server.app.core.config import settings
 from server.app.database.session import SessionLocal
-from server.app.services.setup_service import ensure_owner
+from server.app.services.setup_service import SetupError, ensure_owner
 
 ALEMBIC_INI = Path(__file__).with_name("alembic.ini")
 
@@ -35,7 +35,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m server.manage")
     parser.add_argument("command", choices=["init", "migrate"])
     args = parser.parse_args()
-    {"init": init, "migrate": migrate}[args.command]()
+    try:
+        {"init": init, "migrate": migrate}[args.command]()
+    except SetupError as exc:
+        raise SystemExit(f"Setup failed: {exc}") from None
 
 
 if __name__ == "__main__":

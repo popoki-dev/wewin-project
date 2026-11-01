@@ -82,7 +82,7 @@ The server reads `WEWIN_*` environment variables, or `deployment/.env` in Docker
 | `WEWIN_ENVIRONMENT` | `development` | `production` requires `WEWIN_SECRET_KEY` and disables `/docs` |
 | `WEWIN_DATABASE_URL` | `postgresql+psycopg://wewin:wewin@127.0.0.1:5433/wewin` | Set by Compose in production |
 | `WEWIN_SECRET_KEY` | temporary key (dev only) | 32+ characters; signs tokens and reset codes |
-| `WEWIN_OWNER_EMAIL` / `_PASSWORD` / `_NAME`, `WEWIN_ORGANIZATION_NAME` | see `.env.example` | Used only when no owner exists yet |
+| `WEWIN_OWNER_EMAIL` / `_PASSWORD` / `_NAME`, `WEWIN_ORGANIZATION_NAME` | see `.env.example` | Used only when no owner exists yet. The password must meet the password policy, and production rejects the development default |
 | `WEWIN_ACCESS_TOKEN_MINUTES` | 30 | |
 | `WEWIN_REFRESH_TOKEN_HOURS` | 12 | Session length without Remember Me |
 | `WEWIN_REMEMBER_ME_DAYS` | 30 | Session length with Remember Me |
