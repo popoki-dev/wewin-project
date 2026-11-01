@@ -10,8 +10,11 @@ Rectangle {
     id: root
 
     default property alias content: contentArea.data
+    property string currentPage: "home"
 
     color: Theme.background
+
+    ChangePasswordDialog { id: changePasswordDialog }
 
     RowLayout {
         anchors.fill: parent
@@ -33,22 +36,42 @@ Rectangle {
 
                 Repeater {
                     model: [
-                        { icon: "users",  text: qsTr("Members") },
-                        { icon: "folder", text: qsTr("Projects") },
-                        { icon: "chart",  text: qsTr("Revenue") }
+                        { page: "home",     icon: "home",   text: qsTr("Overview"), ready: true },
+                        { page: "members",  icon: "users",  text: qsTr("Members"),  ready: AuthViewModel.canManageMembers },
+                        { page: "roles",    icon: "key",    text: qsTr("Roles"),    ready: AuthViewModel.isOwner },
+                        { page: "projects", icon: "folder", text: qsTr("Projects"), ready: false },
+                        { page: "revenue",  icon: "chart",  text: qsTr("Revenue"),  ready: false }
                     ]
                     delegate: ItemDelegate {
                         id: navItem
                         required property var modelData
+                        readonly property bool current: root.currentPage === modelData.page
+                        // Members needs members.view; Roles is the Owner's.
+                        visible: modelData.page === "members" ? AuthViewModel.canManageMembers
+                               : modelData.page === "roles" ? AuthViewModel.isOwner : true
                         Layout.fillWidth: true
                         implicitHeight: 40
-                        enabled: false
-                        background: Rectangle { radius: Theme.radiusSmall; color: "transparent" }
+                        enabled: modelData.ready
+                        hoverEnabled: true
+                        onClicked: root.currentPage = modelData.page
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: navItem.current ? Theme.accentSoft : navItem.hovered ? Theme.surfaceHover : "transparent"
+                        }
                         contentItem: RowLayout {
                             spacing: 10
-                            Icon { name: navItem.modelData.icon; color: Theme.textFaint }
-                            Label { text: navItem.modelData.text; color: Theme.textMuted; font.pixelSize: 14; Layout.fillWidth: true }
-                            Label { text: qsTr("Soon"); color: Theme.textFaint; font.pixelSize: 11 }
+                            Icon {
+                                name: navItem.modelData.icon
+                                color: navItem.current ? Theme.accent : navItem.enabled ? Theme.textMuted : Theme.textFaint
+                            }
+                            Label {
+                                text: navItem.modelData.text
+                                color: navItem.current ? Theme.accent : navItem.enabled ? Theme.text : Theme.textMuted
+                                font.pixelSize: 14
+                                font.weight: navItem.current ? Font.DemiBold : Font.Normal
+                                Layout.fillWidth: true
+                            }
+                            Label { visible: !navItem.enabled; text: qsTr("Soon"); color: Theme.textFaint; font.pixelSize: 11 }
                         }
                     }
                 }
@@ -84,6 +107,17 @@ Rectangle {
                             Layout.fillWidth: true
                             Label { text: AuthViewModel.userName; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
                             Label { text: AuthViewModel.userEmail; color: Theme.textMuted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                        }
+                        ToolButton {
+                            id: passwordButton
+                            width: 32; height: 32
+                            hoverEnabled: true
+                            onClicked: changePasswordDialog.openDialog()
+                            Accessible.name: qsTr("Change password")
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Change password")
+                            background: Rectangle { radius: Theme.radiusSmall; color: passwordButton.hovered ? Theme.surfaceHover : "transparent" }
+                            contentItem: Item { Icon { anchors.centerIn: parent; name: "key"; color: passwordButton.hovered ? Theme.accent : Theme.textMuted } }
                         }
                         ToolButton {
                             id: logoutButton

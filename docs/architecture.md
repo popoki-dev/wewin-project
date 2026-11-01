@@ -59,10 +59,13 @@ Schema changes go through **Alembic** (`server/app/database/migrations`). In Doc
 
 ## Authentication flow
 
-1. `POST /api/auth/login` returns a 30-minute JWT **access token** and an opaque **refresh token**. The refresh token lasts 12 hours, or 30 days with Remember Me, and is stored server-side as a SHA-256 hash.
+1. `POST /api/auth/login` sends the computer's **device ID** (SHA-256 of its MAC address, from `client/app/device.py`). The first sign-in binds the account to that computer, and other computers are refused until the binding is reset. The response carries a fresh **device secret**, a 30-minute JWT **access token** and an opaque **refresh token**. The refresh token lasts 12 hours, or 30 days with Remember Me, and is stored server-side as a SHA-256 hash.
 2. The client renews the access token shortly before it expires with `POST /api/auth/refresh`. Every refresh **rotates** the refresh token; presenting a rotated-out token revokes all of that user's sessions, because it is treated as a theft signal.
 3. With Remember Me, the refresh token is kept in the OS keyring, and the next launch signs in silently. The password is never stored.
-4. A password reset revokes every session and invalidates outstanding access tokens through `password_changed_at`.
+4. Every later request is **signed**: an HMAC-SHA256 over the device ID, email, UTC timestamp, a nonce, the method and the path, keyed by the device secret. `ApiClient` adds the headers; `get_signed_in_user` verifies them and rejects stale timestamps and replays. The secret is never stored on the server; it's derived from `WEWIN_SECRET_KEY`.
+5. An account created with an initial password has `must_change_password` set. The client opens the change-password screen, and the server refuses everything else until the password is changed.
+6. A password change or reset revokes every session. It also invalidates outstanding access tokens, which carry a `pwv` claim tied to `password_changed_at`.
+7. With Remember Me, the device secret is kept in the keyring with the refresh token, so the next launch can sign the silent refresh.
 
 ## Deliberately not included (yet)
 

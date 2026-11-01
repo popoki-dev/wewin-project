@@ -7,14 +7,9 @@ from server.app.database.session import SessionLocal
 from server.app.models import AuditLog, PasswordResetCode, User
 from shared.api_contracts import Paths
 from shared.enums import AuditAction
+from tests.server.helpers import OWNER_EMAIL, OWNER_PASSWORD, DeviceSession, login, sign_in
 
-OWNER_EMAIL = "admin9531@gmail.com"
-OWNER_PASSWORD = "asdqwe!@#123"
 NEW_PASSWORD = "N3w-Secure!pass"
-
-
-def login(client, email=OWNER_EMAIL, password=OWNER_PASSWORD, remember_me=False):
-    return client.post(Paths.AUTH_LOGIN, json={"email": email, "password": password, "remember_me": remember_me})
 
 
 def parse_time(value: str) -> datetime:
@@ -43,7 +38,7 @@ def test_owner_can_log_in(client):
     assert r.status_code == 200, r.text
     data = r.json()
     assert data["user"]["role"] == "owner"
-    me = client.get(Paths.AUTH_ME, headers={"Authorization": f"Bearer {data['access_token']}"})
+    me = DeviceSession(client, data).get(Paths.AUTH_ME)
     assert me.status_code == 200 and me.json()["email"] == OWNER_EMAIL
     assert AuditAction.LOGIN_SUCCEEDED.value in audit_actions()
 
@@ -87,22 +82,23 @@ def test_disabled_account_cannot_log_in(client):
 
 
 def test_refresh_rotates_and_detects_reuse(client):
-    first = login(client, remember_me=True).json()["refresh_token"]
-    r = client.post(Paths.AUTH_REFRESH, json={"refresh_token": first})
+    session = sign_in(client, remember_me=True)
+    first = session.refresh_token
+    r = session.refresh()
     assert r.status_code == 200
     second = r.json()["refresh_token"]
     assert second != first
 
     # Replaying the rotated-out token ends every session of that user.
-    assert client.post(Paths.AUTH_REFRESH, json={"refresh_token": first}).status_code == 401
-    assert client.post(Paths.AUTH_REFRESH, json={"refresh_token": second}).status_code == 401
+    assert session.refresh(first).status_code == 401
+    assert session.refresh(second).status_code == 401
     assert AuditAction.SESSION_REUSE_DETECTED.value in audit_actions()
 
 
 def test_logout_revokes_refresh_token(client):
-    token = login(client).json()["refresh_token"]
-    assert client.post(Paths.AUTH_LOGOUT, json={"refresh_token": token}).status_code == 200
-    assert client.post(Paths.AUTH_REFRESH, json={"refresh_token": token}).status_code == 401
+    session = sign_in(client)
+    assert client.post(Paths.AUTH_LOGOUT, json={"refresh_token": session.refresh_token}).status_code == 200
+    assert session.refresh().status_code == 401
 
 
 def test_me_requires_valid_token(client):
@@ -138,7 +134,7 @@ def test_forgot_password_is_throttled(client, outbox):
 
 
 def test_full_password_reset_flow(client, outbox):
-    old_refresh = login(client, remember_me=True).json()["refresh_token"]
+    old_session = sign_in(client, remember_me=True)
     client.post(Paths.AUTH_FORGOT_PASSWORD, json={"email": OWNER_EMAIL})
     code = outbox[-1][1]
 
@@ -154,7 +150,7 @@ def test_full_password_reset_flow(client, outbox):
 
     assert login(client).status_code == 401
     assert login(client, password=NEW_PASSWORD).status_code == 200
-    assert client.post(Paths.AUTH_REFRESH, json={"refresh_token": old_refresh}).status_code == 401
+    assert old_session.refresh().status_code == 401
     again = client.post(Paths.AUTH_RESET_PASSWORD, json={"email": OWNER_EMAIL, "code": code, "new_password": NEW_PASSWORD})
     assert again.status_code == 400
     assert AuditAction.PASSWORD_RESET_COMPLETED.value in audit_actions()

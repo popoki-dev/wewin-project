@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from server import __version__
 from server.app.api.router import api_router
 from server.app.core.config import settings
-from server.app.services.auth_service import AuthError
+from server.app.services.errors import ServiceError
 
 
 def create_app() -> FastAPI:
@@ -28,8 +28,8 @@ def create_app() -> FastAPI:
         openapi_url=None if production else "/openapi.json",
     )
 
-    @app.exception_handler(AuthError)
-    async def _auth_error(_: Request, exc: AuthError) -> JSONResponse:
+    @app.exception_handler(ServiceError)
+    async def _service_error(_: Request, exc: ServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
     @app.exception_handler(RequestValidationError)

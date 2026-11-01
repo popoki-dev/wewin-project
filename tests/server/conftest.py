@@ -14,6 +14,12 @@ _db_url = os.environ.get("WEWIN_TEST_DATABASE_URL") or f"sqlite:///{tempfile.mkd
 os.environ["WEWIN_DATABASE_URL"] = _db_url
 os.environ["WEWIN_SECRET_KEY"] = "test-secret-key-for-unit-tests-only-0123456789"
 os.environ["WEWIN_ENVIRONMENT"] = "development"
+# Environment variables win over a developer's .env file, so tests see these values only.
+os.environ["WEWIN_ORGANIZATION_NAME"] = "WeWin"
+os.environ["WEWIN_OWNER_EMAIL"] = "admin9531@gmail.com"
+os.environ["WEWIN_OWNER_PASSWORD"] = "asdqwe!@#123"
+os.environ["WEWIN_OWNER_NAME"] = "Owner"
+os.environ["WEWIN_SMTP_HOST"] = ""
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402

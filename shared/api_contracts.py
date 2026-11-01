@@ -19,6 +19,27 @@ class Paths:
     AUTH_ME = f"{API_PREFIX}/auth/me"
     AUTH_FORGOT_PASSWORD = f"{API_PREFIX}/auth/forgot-password"
     AUTH_RESET_PASSWORD = f"{API_PREFIX}/auth/reset-password"
+    AUTH_CHANGE_PASSWORD = f"{API_PREFIX}/auth/change-password"
+
+    TEAMS = f"{API_PREFIX}/teams"
+    MEMBERS = f"{API_PREFIX}/members"
+    ROLE_BUNDLES = f"{API_PREFIX}/role-bundles"
+
+    @staticmethod
+    def team(team_id: int) -> str:
+        return f"{API_PREFIX}/teams/{team_id}"
+
+    @staticmethod
+    def member(user_id: int) -> str:
+        return f"{API_PREFIX}/members/{user_id}"
+
+    @staticmethod
+    def role_bundle(bundle_id: int) -> str:
+        return f"{API_PREFIX}/role-bundles/{bundle_id}"
+
+    @staticmethod
+    def member_device_reset(user_id: int) -> str:
+        return f"{API_PREFIX}/members/{user_id}/reset-device"
 
 
 # Password policy (validated by the server, hinted by the client).

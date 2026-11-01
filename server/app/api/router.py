@@ -9,10 +9,11 @@ from shared.api_contracts import API_PREFIX, APP_ID
 from ... import __version__
 from ..database.session import get_db
 from ..schemas.common import HealthResponse
-from .routes import auth
+from .routes import auth, members
 
 api_router = APIRouter(prefix=API_PREFIX)
 api_router.include_router(auth.router)
+api_router.include_router(members.router)
 
 
 @api_router.get("/health", response_model=HealthResponse, tags=["meta"])

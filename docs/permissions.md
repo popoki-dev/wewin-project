@@ -2,23 +2,60 @@
 
 ## Roles
 
-The roles are defined in `shared/enums.py` and ranked: **owner > admin > member**. A higher role has every permission of a lower one (`Role.at_least`).
+The roles are defined in `shared/enums.py` and ranked: **owner > team_leader > member**. A higher role has every permission of a lower one (`Role.at_least`).
 
 | Role | Intended scope |
 |---|---|
-| `owner` | Whole organization, including billing-level and destructive actions and managing admins. Created at first start. |
-| `admin` | Day-to-day management of members, teams, projects and revenue. |
+| `owner` | Whole organization, including creating teams, adding Team Leaders and destructive actions. Created at first start; belongs to no team. |
+| `team_leader` | Their own team: adds plain members to it and resets those members' devices. |
 | `member` | Their own profile, plus the projects and data they're assigned to. |
+
+Accounts are only created by people with `members.add` (the Owner, Team Leaders, and anyone given it through a bundle); there's no self-registration. Whoever adds a member sets that member's initial password, and the member must change it at first sign-in.
+
+## Permissions and role bundles
+
+The catalog is in `shared/permissions.py`:
+
+| Group | Permissions |
+|---|---|
+| Members | `members.view`, `members.add`, `members.reset_device`, `members.assign_roles` |
+| Teams | `teams.create`, `teams.rename` |
+| Projects (enforced once the module exists) | `projects.view`, `projects.create`, `projects.edit` |
+| Revenue (enforced once the module exists) | `revenue.view`, `revenue.edit` |
+
+A user's **effective permissions** are their base role's permissions plus those of every **role bundle** assigned to them.
+
+- **Base roles:** the Owner has every permission. A Team Leader has all of Members, Projects and Revenue. A Member has `projects.view`.
+- **Implied permission:** any `members.*` permission also grants `members.view`.
+
+Rules:
+
+1. **Defining bundles:** only the Owner creates, edits and deletes bundles, on the Roles page. Edits and deletions apply immediately to everyone holding the bundle.
+2. **Assigning bundles:** this happens when a member is added, or later with **Edit roles**.
+   - The Owner can assign any bundle to anyone except themselves; the Owner already has every permission.
+   - Anyone else needs `members.assign_roles`, and can add or remove a bundle only if they hold **every** permission in it. So nobody can grant more than they have.
+3. **Scope for non-owners:** a non-owner acts only on plain members of their own team, never on themselves or on Team Leaders. This applies to adding, resetting devices and assigning bundles. `teams.*` permissions apply across the whole organization.
+4. **Base roles:** only the Owner changes a member's base role (Member ↔ Team Leader).
+5. **When changes take effect:** the server applies a change on the next request. The affected user's app shows new menus after their next token refresh (at most 30 minutes) or their next sign-in.
+
+## Sign-in rules (every role, including the Owner)
+
+1. **Device binding.** The first sign-in binds the account to that computer's device ID (a hash of its MAC address). Sign-ins from any other computer are refused until the binding is reset:
+   - the Owner can reset anyone's binding;
+   - a Team Leader can reset their own team's plain members;
+   - the Owner's own binding is reset on the server with `python -m server.manage reset-device <email>`.
+2. **Signed requests.** Every authenticated request carries an HMAC signature made with the device secret. See [api.md](api.md).
+3. **First login.** An account with an initial password gets `403` from every endpoint except `/auth/me` and `/auth/change-password` until the password is changed. `get_current_user` enforces this, so every route that depends on it is covered.
 
 ## Enforcing in the API
 
 ```python
 from fastapi import Depends
-from server.app.core.permissions import require_role, ensure_same_organization
-from shared.enums import Role
+from server.app.core.permissions import require_permission, ensure_same_organization
+from shared.permissions import Permission
 
 @router.post("/members")
-def invite_member(body: InviteRequest, user: User = Depends(require_role(Role.ADMIN))):
+def invite_member(body: InviteRequest, user: User = Depends(require_permission(Permission.MEMBERS_ADD))):
     ...
 
 @router.get("/projects/{project_id}")
@@ -35,13 +72,20 @@ Rules:
 
 ## Matrix
 
-| Action | member | admin | owner |
+Defaults per base role. Bundles can grant a Member or Team Leader more, within the scope rules above.
+
+| Action | member | team leader | owner |
 |---|:-:|:-:|:-:|
-| Sign in, reset own password | ✓ | ✓ | ✓ |
-| View own profile | ✓ | ✓ | ✓ |
-| *Planned:* view teams/projects they belong to | ✓ | ✓ | ✓ |
-| *Planned:* invite/deactivate members, manage teams & projects | | ✓ | ✓ |
+| Sign in, reset or change own password | ✓ | ✓ | ✓ |
+| View own profile and own team | ✓ | ✓ | ✓ |
+| List members | | own team | all |
+| Add members | | to own team, as member | any team, as member or team leader |
+| Reset a member's device | | own team's members | anyone but themselves (CLI for that) |
+| Assign role bundles | | own team's members, bundles within own permissions | anyone but themselves |
+| Change base roles | | | ✓ |
+| Create, rename teams | | | ✓ |
+| Define role bundles | | | ✓ |
+| *Planned:* manage projects | view | ✓ | ✓ |
 | *Planned:* view/edit revenue | | ✓ | ✓ |
-| *Planned:* promote/demote admins, organization settings | | | ✓ |
 
 Update this table as each module lands.

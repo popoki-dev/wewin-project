@@ -28,17 +28,16 @@ from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.auth_repository import PasswordResetRepository, RefreshSessionRepository
 from ..repositories.user_repository import UserRepository
 from ..schemas.auth import TokenResponse, UserOut
+from .device_service import DeviceService, DeviceSignature
+from .errors import ServiceError
 
 INVALID_CREDENTIALS = "Invalid email or password."
 SESSION_EXPIRED = "Session expired. Please sign in again."
 INVALID_RESET_CODE = "The reset code is invalid or has expired."
 
 
-class AuthError(Exception):
-    def __init__(self, status_code: int, message: str) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
+class AuthError(ServiceError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -62,9 +61,12 @@ class AuthService:
         self.sessions = RefreshSessionRepository(db)
         self.reset_codes = PasswordResetRepository(db)
         self.audit = AuditRepository(db)
+        self.devices = DeviceService(db)
 
     # ----------------------------------------------------------------- tokens
-    def _issue_tokens(self, user: User, remember_me: bool, client: ClientInfo) -> TokenResponse:
+    def _issue_tokens(
+        self, user: User, remember_me: bool, client: ClientInfo, device_secret: str | None = None
+    ) -> TokenResponse:
         lifetime = (
             timedelta(days=self.settings.remember_me_days)
             if remember_me
@@ -81,17 +83,20 @@ class AuthService:
                 expires_at=_now() + lifetime,
             )
         )
-        access_token, expires_in = create_access_token(user.id, user.organization_id, user.role.value)
+        access_token, expires_in = create_access_token(
+            user.id, user.organization_id, user.role.value, user.password_changed_at
+        )
         return TokenResponse(
             access_token=access_token,
             expires_in=expires_in,
             refresh_token=refresh_token,
             refresh_expires_at=session.expires_at,
+            device_secret=device_secret,
             user=UserOut.model_validate(user),
         )
 
     # ---------------------------------------------------------------- sign in
-    def login(self, email: str, password: str, remember_me: bool, client: ClientInfo) -> TokenResponse:
+    def login(self, email: str, password: str, remember_me: bool, device_id: str, client: ClientInfo) -> TokenResponse:
         user = self.users.get_by_email(email, for_update=True)
         if user is None:
             burn_password_check(password)
@@ -120,12 +125,14 @@ class AuthService:
         if not user.is_active:
             raise AuthError(403, "This account has been disabled.")
 
+        device_secret = self.devices.bind_at_sign_in(user, device_id, client)
+
         if password_needs_rehash(user.password_hash):
             user.password_hash = hash_password(password)
         user.failed_login_count = 0
         user.locked_until = None
         user.last_login_at = now
-        tokens = self._issue_tokens(user, remember_me, client)
+        tokens = self._issue_tokens(user, remember_me, client, device_secret)
         self.audit.record(
             AuditAction.LOGIN_SUCCEEDED, client, user_id=user.id, organization_id=user.organization_id,
             remember_me=remember_me,
@@ -133,7 +140,7 @@ class AuthService:
         self.db.commit()
         return tokens
 
-    def refresh(self, refresh_token: str, client: ClientInfo) -> TokenResponse:
+    def refresh(self, refresh_token: str, signature: DeviceSignature | None, client: ClientInfo) -> TokenResponse:
         session = self.sessions.get_by_token_hash(sha256(refresh_token), for_update=True)
         if session is None:
             raise AuthError(401, SESSION_EXPIRED)
@@ -145,6 +152,7 @@ class AuthService:
             raise AuthError(401, SESSION_EXPIRED)
         if session.expires_at <= _now() or not session.user.is_active:
             raise AuthError(401, SESSION_EXPIRED)
+        self.devices.verify(session.user, signature)
 
         session.revoked_at = _now()
         tokens = self._issue_tokens(session.user, session.remember_me, client)
@@ -159,6 +167,27 @@ class AuthService:
             session.revoked_at = _now()
             self.audit.record(AuditAction.LOGOUT, client, user_id=session.user_id)
             self.db.commit()
+
+    def change_password(
+        self, user: User, current_password: str, new_password: str, remember_me: bool, client: ClientInfo
+    ) -> TokenResponse:
+        """Change the password (required after an initial one). Ends every other session."""
+        if not verify_password(current_password, user.password_hash):
+            raise AuthError(400, "Your current password is incorrect.")
+        if (problem := validate_password_strength(new_password)) is not None:
+            raise AuthError(422, problem)
+        if new_password == current_password:
+            raise AuthError(422, "Choose a password different from your current one.")
+
+        now = _now()
+        user.password_hash = hash_password(new_password)
+        user.password_changed_at = now
+        user.must_change_password = False
+        self.sessions.revoke_all_for_user(user.id, now)
+        tokens = self._issue_tokens(user, remember_me, client)
+        self.audit.record(AuditAction.PASSWORD_CHANGED, client, user_id=user.id, organization_id=user.organization_id)
+        self.db.commit()
+        return tokens
 
     # ---------------------------------------------------------- password reset
     def request_password_reset(self, email: str, client: ClientInfo) -> PendingResetCode | None:
@@ -208,6 +237,7 @@ class AuthService:
         entry.used_at = now
         user.password_hash = hash_password(new_password)
         user.password_changed_at = now
+        user.must_change_password = False  # the user chose this password themselves
         user.failed_login_count = 0
         user.locked_until = None
         self.sessions.revoke_all_for_user(user.id, now)

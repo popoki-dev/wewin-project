@@ -26,6 +26,8 @@ class ApiResult:
 
 
 Callback = Callable[[ApiResult], None]
+# (method, path) -> device signature headers for that request
+Signer = Callable[[str, str], dict[str, str]]
 
 
 def is_loopback_host(host: str) -> bool:
@@ -74,6 +76,11 @@ class ApiClient(QObject):
         # lambdas) keeps them alive until the reply arrives.
         self._pending: dict[int, tuple[str, Callback]] = {}
         self._next_id = 0
+        self._signer: Signer | None = None
+
+    def set_signer(self, signer: Signer | None) -> None:
+        """Sign every request with the device secret while signed in; None stops signing."""
+        self._signer = signer
 
     def get(self, server: str, path: str, callback: Callback, token: str | None = None) -> None:
         self._send("GET", server, path, None, callback, token)
@@ -81,18 +88,39 @@ class ApiClient(QObject):
     def post(self, server: str, path: str, body: dict, callback: Callback, token: str | None = None) -> None:
         self._send("POST", server, path, body, callback, token)
 
+    def put(self, server: str, path: str, body: dict, callback: Callback, token: str | None = None) -> None:
+        self._send("PUT", server, path, body, callback, token)
+
+    def patch(self, server: str, path: str, body: dict, callback: Callback, token: str | None = None) -> None:
+        self._send("PATCH", server, path, body, callback, token)
+
+    def delete(self, server: str, path: str, callback: Callback, token: str | None = None) -> None:
+        self._send("DELETE", server, path, None, callback, token)
+
     def _send(self, method: str, server: str, path: str, body: dict | None, callback: Callback, token: str | None) -> None:
-        request = QNetworkRequest(QUrl(server + path))
+        url = QUrl(server + path)
+        request = QNetworkRequest(url)
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
         request.setRawHeader(b"Accept", b"application/json")
         request.setRawHeader(b"User-Agent", f"WeWin-Desktop/{__version__}".encode())
         if token:
             request.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+        if self._signer is not None:
+            # Sign the full URL path, which includes any prefix in the server address.
+            for name, value in self._signer(method, url.path()).items():
+                request.setRawHeader(name.encode(), value.encode())
 
+        data = QByteArray(json.dumps(body or {}).encode())
         if method == "GET":
             reply = self._nam.get(request)
+        elif method == "POST":
+            reply = self._nam.post(request, data)
+        elif method == "PUT":
+            reply = self._nam.put(request, data)
+        elif method == "DELETE":
+            reply = self._nam.deleteResource(request)
         else:
-            reply = self._nam.post(request, QByteArray(json.dumps(body or {}).encode()))
+            reply = self._nam.sendCustomRequest(request, method.encode(), data)
 
         self._next_id += 1
         reply.setProperty(_REQUEST_ID, self._next_id)
@@ -126,6 +154,8 @@ class ApiClient(QObject):
 
         try:
             data = json.loads(raw) if raw else {}
+            if isinstance(data, list):  # list endpoints
+                data = {"items": data}
             if not isinstance(data, dict):
                 raise ValueError
         except ValueError:

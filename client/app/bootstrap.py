@@ -14,8 +14,10 @@ from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from client import __version__
 from client.api.auth_api import AuthApi
 from client.api.client import ApiClient
+from client.api.members_api import MembersApi
 from client.app.storage import Storage
 from client.viewmodels.auth_viewmodel import AuthViewModel
+from client.viewmodels.members_viewmodel import MembersViewModel
 from client.viewmodels.theme_viewmodel import ThemeViewModel
 
 QML_DIR = Path(__file__).resolve().parent.parent / "frontend" / "qml"
@@ -38,9 +40,11 @@ class Application:
         self.api_client = ApiClient()
         self.theme = ThemeViewModel(self.storage)
         self.auth = AuthViewModel(self.storage, AuthApi(self.api_client))
+        self.members = MembersViewModel(self.auth, MembersApi(self.api_client))
 
         qmlRegisterSingletonInstance(ThemeViewModel, "WeWin.ViewModels", 1, 0, "ThemeViewModel", self.theme)
         qmlRegisterSingletonInstance(AuthViewModel, "WeWin.ViewModels", 1, 0, "AuthViewModel", self.auth)
+        qmlRegisterSingletonInstance(MembersViewModel, "WeWin.ViewModels", 1, 0, "MembersViewModel", self.members)
 
         self.engine = QQmlApplicationEngine()
         self.engine.load(QUrl.fromLocalFile(str(QML_DIR / "Main.qml")))
