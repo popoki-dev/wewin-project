@@ -148,6 +148,11 @@ class AuthViewModel(QObject):
     def canManageMembers(self) -> bool:
         return self.has("members.view")
 
+    @Property(bool, notify=sessionChanged)
+    def canViewTeams(self) -> bool:
+        """The Teams tab: for anyone who manages members or teams."""
+        return self.has("members.view") or self.has("teams.create") or self.has("teams.rename")
+
     @Property(int, notify=sessionChanged)
     def userTeamId(self) -> int:
         return self._user.get("team_id") or 0

@@ -9,11 +9,12 @@ AppShell {
     id: shell
     objectName: "appShell"
 
-    onCurrentPageChanged: if (currentPage === "members" || currentPage === "roles") MembersViewModel.refresh()
+    onCurrentPageChanged: if (["members", "teams", "roles"].indexOf(currentPage) >= 0) MembersViewModel.refresh()
 
     StackLayout {
         anchors.fill: parent
-        currentIndex: shell.currentPage === "members" ? 1 : shell.currentPage === "roles" ? 2 : 0
+        currentIndex: ["home", "members", "teams", "roles"].indexOf(shell.currentPage) > 0
+                      ? ["home", "members", "teams", "roles"].indexOf(shell.currentPage) : 0
 
         // Overview: placeholder until the Projects and Revenue modules land.
         Item {
@@ -59,6 +60,7 @@ AppShell {
         }
 
         MembersPage {}
+        TeamsPage {}
         RolesPage {}
     }
 }
