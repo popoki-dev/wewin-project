@@ -1,1 +1,1 @@
-# wewin-project
+# WeWin Project
