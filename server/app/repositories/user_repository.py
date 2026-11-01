@@ -35,6 +35,10 @@ class UserRepository:
         self.db.flush()
         return user
 
+    def delete(self, user: User) -> None:
+        self.db.delete(user)
+        self.db.flush()
+
 
 class OrganizationRepository:
     def __init__(self, db: Session) -> None:

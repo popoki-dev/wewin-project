@@ -15,7 +15,7 @@ from ...schemas.common import MessageResponse
 from ...schemas.members import (
     MemberCreate,
     MemberOut,
-    MemberRolesUpdate,
+    MemberUpdate,
     RoleBundleIn,
     RoleBundleOut,
     TeamCreate,
@@ -85,15 +85,26 @@ def add_member(
 
 
 @router.patch("/members/{user_id}", response_model=MemberOut)
-def update_member_roles(
+def update_member(
     user_id: int,
-    body: MemberRolesUpdate,
+    body: MemberUpdate,
     user: User = Depends(require_permission(Permission.MEMBERS_VIEW)),
     client: ClientInfo = Depends(get_client_info),
     members: MemberService = Depends(get_member_service),
 ) -> MemberOut:
-    # Finer checks (base role: Owner only; bundles: members.assign_roles) are in the service.
-    return members.update_roles(user, user_id, body, client)
+    # Finer checks (details and base role: Owner only; bundles: members.assign_roles) are in the service.
+    return members.update_member(user, user_id, body, client)
+
+
+@router.delete("/members/{user_id}", response_model=MessageResponse)
+def delete_member(
+    user_id: int,
+    user: User = Depends(require_permission(Permission.MEMBERS_DELETE)),
+    client: ClientInfo = Depends(get_client_info),
+    members: MemberService = Depends(get_member_service),
+) -> MessageResponse:
+    members.delete_member(user, user_id, client)
+    return MessageResponse(message="Member deleted.")
 
 
 @router.post("/members/{user_id}/reset-device", response_model=MemberOut)

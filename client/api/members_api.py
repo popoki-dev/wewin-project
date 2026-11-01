@@ -29,6 +29,9 @@ class MembersApi:
     def update_member(self, server: str, token: str, user_id: int, body: dict, callback: Callback) -> None:
         self._client.patch(server, Paths.member(user_id), body, callback, token)
 
+    def delete_member(self, server: str, token: str, user_id: int, callback: Callback) -> None:
+        self._client.delete(server, Paths.member(user_id), callback, token)
+
     def reset_device(self, server: str, token: str, user_id: int, callback: Callback) -> None:
         self._client.post(server, Paths.member_device_reset(user_id), {}, callback, token)
 

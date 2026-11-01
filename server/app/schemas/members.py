@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from shared.permissions import Permission
 
-from .auth import _EmailModel
+from .auth import _EmailModel, normalize_email
 
 
 def _clean_name(v: str, message: str) -> str:
@@ -64,11 +64,30 @@ class MemberCreate(_EmailModel):
     role_bundle_ids: list[int] = Field(default_factory=list, max_length=50)
 
 
-class MemberRolesUpdate(BaseModel):
-    """Omitted fields are left unchanged."""
+class MemberUpdate(BaseModel):
+    """Omitted fields are left unchanged.
 
+    Details (name, email, active, new initial password) need `members.edit`; moving a
+    member to another team and the base role are the Owner's; role bundles follow the
+    assignment rules in docs/permissions.md.
+    """
+
+    full_name: str | None = Field(default=None, max_length=200)
+    email: str | None = None
+    team_id: int | None = None
+    is_active: bool | None = None
+    # Replaces the password with a new initial one the member must change at next sign-in.
+    new_password: str | None = Field(default=None, min_length=1, max_length=256)
     role: Literal["member", "team_leader"] | None = None
     role_bundle_ids: list[int] | None = Field(default=None, max_length=50)
+
+    @field_validator("email")
+    @classmethod
+    def _check_email(cls, v: str | None) -> str | None:
+        return None if v is None else normalize_email(v)
+
+    def details_given(self) -> bool:
+        return any(v is not None for v in (self.full_name, self.email, self.team_id, self.is_active, self.new_password))
 
 
 class MemberOut(BaseModel):

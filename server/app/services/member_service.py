@@ -8,6 +8,8 @@ hold themselves, so nobody can grant more than they have.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from shared.enums import AuditAction, Role
@@ -20,7 +22,8 @@ from ..repositories.device_repository import DeviceRepository
 from ..repositories.role_bundle_repository import RoleBundleRepository
 from ..repositories.team_repository import TeamRepository
 from ..repositories.user_repository import UserRepository
-from ..schemas.members import BundleRef, MemberCreate, MemberOut, MemberRolesUpdate, TeamOut
+from ..repositories.auth_repository import RefreshSessionRepository
+from ..schemas.members import BundleRef, MemberCreate, MemberOut, MemberUpdate, TeamOut
 from .device_service import DeviceService
 from .errors import ServiceError
 from .role_bundle_service import BUNDLE_NOT_FOUND
@@ -159,9 +162,80 @@ class MemberService:
         self.db.commit()
         return self._out(user, device_registered=False)
 
-    def update_roles(self, actor: User, user_id: int, body: MemberRolesUpdate, client: ClientInfo) -> MemberOut:
-        """Change a member's base role (Owner only) and/or their set of role bundles."""
+    def update_member(self, actor: User, user_id: int, body: MemberUpdate, client: ClientInfo) -> MemberOut:
+        """Edit a member's details, base role (Owner only) and/or role bundles."""
         user = self._get_member(actor, user_id)
+        if body.details_given():
+            self._update_details(actor, user, body, client)
+        if body.role is not None or body.role_bundle_ids is not None:
+            self._update_roles(actor, user, body, client)
+        self.db.commit()
+        return self._out(user, self.devices.get_for_user(user.id) is not None)
+
+    def _update_details(self, actor: User, user: User, body: MemberUpdate, client: ClientInfo) -> None:
+        if actor.role != Role.OWNER:
+            if not actor.can(Permission.MEMBERS_EDIT):
+                raise ServiceError(403, NO_PERMISSION)
+            self._ensure_manageable(actor, user)
+            if body.team_id is not None and body.team_id != user.team_id:
+                raise ServiceError(403, "Only the Owner can move members to another team.")
+        is_self = user.id == actor.id
+        changes: dict = {}
+        # Changes that make the member's current sessions wrong (email is signed into
+        # every request) or unwanted end those sessions.
+        sign_out = False
+
+        if body.full_name is not None and body.full_name.strip() != user.full_name:
+            changes["full_name"] = {"from": user.full_name, "to": body.full_name.strip()}
+            user.full_name = body.full_name.strip()
+
+        if body.email is not None and body.email != user.email:
+            if self.users.get_by_email(body.email) is not None:
+                raise ServiceError(409, "An account with this email already exists.")
+            changes["email"] = {"from": user.email, "to": body.email}
+            user.email = body.email
+            sign_out = True
+
+        if body.team_id is not None and body.team_id != user.team_id:
+            if user.role == Role.OWNER:
+                raise ServiceError(422, "The Owner does not belong to a team.")
+            team = self.teams.get(body.team_id)
+            if team is None or team.organization_id != actor.organization_id:
+                raise ServiceError(404, "Select a team.")
+            changes["team_id"] = {"from": user.team_id, "to": team.id}
+            user.team_id = team.id
+            user.team = team
+
+        if body.is_active is not None and body.is_active != user.is_active:
+            if is_self:
+                raise ServiceError(422, "You cannot disable your own account.")
+            changes["is_active"] = body.is_active
+            user.is_active = body.is_active
+            sign_out = sign_out or not body.is_active
+
+        if body.new_password is not None:
+            if is_self:
+                raise ServiceError(422, "Change your own password with Change password.")
+            if (problem := validate_password_strength(body.new_password)) is not None:
+                raise ServiceError(422, f"New password: {problem}")
+            user.password_hash = hash_password(body.new_password)
+            user.password_changed_at = datetime.now(timezone.utc)
+            user.must_change_password = True
+            user.failed_login_count = 0
+            user.locked_until = None
+            changes["password"] = "reset_to_initial"
+            sign_out = True
+
+        if sign_out:
+            RefreshSessionRepository(self.db).revoke_all_for_user(user.id, datetime.now(timezone.utc))
+        if changes:
+            self.audit.record(
+                AuditAction.USER_UPDATED, client, user_id=actor.id, organization_id=actor.organization_id,
+                target_user_id=user.id, **changes,
+            )
+
+    def _update_roles(self, actor: User, user: User, body: MemberUpdate, client: ClientInfo) -> None:
+        """Change a member's base role (Owner only) and/or their set of role bundles."""
         if user.role == Role.OWNER:
             raise ServiceError(403, "The Owner already has every permission.")
         if body.role is not None and body.role != user.role.value and actor.role != Role.OWNER:
@@ -189,8 +263,21 @@ class MemberService:
                 AuditAction.USER_ROLES_CHANGED, client, user_id=actor.id, organization_id=actor.organization_id,
                 target_user_id=user.id, **changes,
             )
-            self.db.commit()
-        return self._out(user, self.devices.get_for_user(user.id) is not None)
+
+    def delete_member(self, actor: User, user_id: int, client: ClientInfo) -> None:
+        """Delete an account for good. Its device, sessions and bundles go with it; the
+        audit log keeps who it was. Non-owners delete only plain members of their team."""
+        user = self._get_member(actor, user_id)
+        if user.role == Role.OWNER:
+            raise ServiceError(422, "The Owner's account cannot be deleted.")
+        self._ensure_manageable(actor, user)
+        self.audit.record(
+            AuditAction.USER_DELETED, client, user_id=actor.id, organization_id=actor.organization_id,
+            deleted_user_id=user.id, email=user.email, full_name=user.full_name, role=user.role.value,
+            team_id=user.team_id,
+        )
+        self.users.delete(user)
+        self.db.commit()
 
     def reset_device(self, actor: User, user_id: int, client: ClientInfo) -> MemberOut:
         user = self._get_member(actor, user_id)

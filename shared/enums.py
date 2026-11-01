@@ -37,6 +37,8 @@ class AuditAction(str, enum.Enum):
     DEVICE_RESET = "device.reset"
     USER_CREATED = "user.created"
     USER_ROLES_CHANGED = "user.roles_changed"
+    USER_UPDATED = "user.updated"
+    USER_DELETED = "user.deleted"
     TEAM_CREATED = "team.created"
     TEAM_RENAMED = "team.renamed"
     ROLE_BUNDLE_CREATED = "role_bundle.created"

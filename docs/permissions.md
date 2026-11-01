@@ -18,7 +18,7 @@ The catalog is in `shared/permissions.py`:
 
 | Group | Permissions |
 |---|---|
-| Members | `members.view`, `members.add`, `members.reset_device`, `members.assign_roles` |
+| Members | `members.view`, `members.add`, `members.edit`, `members.delete`, `members.reset_device`, `members.assign_roles` |
 | Teams | `teams.create`, `teams.rename` |
 | Projects (enforced once the module exists) | `projects.view`, `projects.create`, `projects.edit` |
 | Revenue (enforced once the module exists) | `revenue.view`, `revenue.edit` |
@@ -34,9 +34,11 @@ Rules:
 2. **Assigning bundles:** this happens when a member is added, or later with **Edit roles**.
    - The Owner can assign any bundle to anyone except themselves; the Owner already has every permission.
    - Anyone else needs `members.assign_roles`, and can add or remove a bundle only if they hold **every** permission in it. So nobody can grant more than they have.
-3. **Scope for non-owners:** a non-owner acts only on plain members of their own team, never on themselves or on Team Leaders. This applies to adding, resetting devices and assigning bundles. `teams.*` permissions apply across the whole organization.
-4. **Base roles:** only the Owner changes a member's base role (Member ↔ Team Leader).
-5. **When changes take effect:** the server applies a change on the next request. The affected user's app shows new menus after their next token refresh (at most 30 minutes) or their next sign-in.
+3. **Scope for non-owners:** a non-owner acts only on plain members of their own team, never on themselves or on Team Leaders. This applies to adding, editing, deleting, resetting devices and assigning bundles. `teams.*` permissions apply across the whole organization.
+4. **Owner only:** changing a member's base role (Member ↔ Team Leader) and moving a member to another team.
+5. **Editing a member** (`members.edit`) covers name, email, active status and setting a new initial password. Changing the email, setting a password or disabling the account signs the member out. Nobody can disable themselves or set their own password this way.
+6. **Deleting a member** (`members.delete`) is permanent; their device, sessions and bundles go with the account. The audit log keeps who it was. The Owner's account cannot be deleted.
+7. **When changes take effect:** the server applies a change on the next request. The affected user's app shows new menus after their next token refresh (at most 30 minutes) or their next sign-in.
 
 ## Sign-in rules (every role, including the Owner)
 
@@ -80,6 +82,9 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | View own profile and own team | ✓ | ✓ | ✓ |
 | List members | | own team | all |
 | Add members | | to own team, as member | any team, as member or team leader |
+| Edit a member (name, email, active, new initial password) | | own team's members | anyone (own name and email only for themselves) |
+| Move a member to another team | | | ✓ |
+| Delete a member | | own team's members | anyone but the Owner |
 | Reset a member's device | | own team's members | anyone but themselves (CLI for that) |
 | Assign role bundles | | own team's members, bundles within own permissions | anyone but themselves |
 | Change base roles | | | ✓ |

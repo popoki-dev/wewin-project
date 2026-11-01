@@ -399,6 +399,11 @@ class AuthViewModel(QObject):
 
         self._api.change_password(server, self._access_token, current, new_password, remember, done)
 
+    def sign_out_with_message(self, message: str) -> None:
+        """Sign out and leave `message` on the sign-in page (e.g. after an email change)."""
+        self.logout()
+        self._set_error(message)
+
     @Slot()
     def logout(self) -> None:
         if self._refresh_token:

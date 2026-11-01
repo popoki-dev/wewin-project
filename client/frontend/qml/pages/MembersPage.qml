@@ -56,6 +56,7 @@ Item {
     }
 
     MemberRolesDialog { id: rolesDialog; objectName: "memberRolesDialog" }
+    MemberEditDialog { id: editDialog; objectName: "memberEditDialog" }
 
     AppDialog {
         id: renameDialog
@@ -406,15 +407,26 @@ Item {
                             }
                             AppButton {
                                 variant: "ghost"
-                                implicitWidth: 100
+                                implicitWidth: 64
                                 implicitHeight: 34
                                 font.pixelSize: 12
-                                text: qsTr("Edit roles")
+                                text: qsTr("Edit")
+                                visible: MembersViewModel.canEditMember(row.modelData)
+                                enabled: !MembersViewModel.busy
+                                onClicked: editDialog.openFor(row.modelData)
+                            }
+                            Item { visible: !MembersViewModel.canEditMember(row.modelData); implicitWidth: 64 }
+                            AppButton {
+                                variant: "ghost"
+                                implicitWidth: 70
+                                implicitHeight: 34
+                                font.pixelSize: 12
+                                text: qsTr("Roles")
                                 visible: MembersViewModel.canEditRoles(row.modelData)
                                 enabled: !MembersViewModel.busy
                                 onClicked: rolesDialog.openFor(row.modelData)
                             }
-                            Item { visible: !MembersViewModel.canEditRoles(row.modelData); implicitWidth: 100 }
+                            Item { visible: !MembersViewModel.canEditRoles(row.modelData); implicitWidth: 70 }
                             AppButton {
                                 variant: "ghost"
                                 implicitWidth: 120
