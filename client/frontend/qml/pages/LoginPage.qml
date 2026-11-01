@@ -53,10 +53,13 @@ AuthLayout {
             iconName: "server"
             placeholderText: "wewin.example.com"
             text: AuthViewModel.savedServerUrl
-            invalid: AuthViewModel.serverInsecure
+            invalid: AuthViewModel.serverInsecure || AuthViewModel.errorFields.indexOf("server") >= 0
             field.inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
             field.onEditingFinished: AuthViewModel.checkServer(text)
-            field.onTextEdited: serverCheckDelay.restart()
+            field.onTextEdited: {
+                serverCheckDelay.restart()
+                AuthViewModel.fieldEdited("server")
+            }
             onAccepted: emailField.forceFocus()
 
             trailing: [
@@ -111,7 +114,9 @@ AuthLayout {
         iconName: "mail"
         placeholderText: "you@company.com"
         text: AuthViewModel.savedEmail
+        invalid: AuthViewModel.errorFields.indexOf("email") >= 0
         field.inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
+        field.onTextEdited: AuthViewModel.fieldEdited("email")
         onAccepted: passwordField.forceFocus()
     }
 
@@ -122,6 +127,8 @@ AuthLayout {
         iconName: "lock"
         password: true
         placeholderText: qsTr("Enter your password")
+        invalid: AuthViewModel.errorFields.indexOf("password") >= 0
+        field.onTextEdited: AuthViewModel.fieldEdited("password")
         onAccepted: page.submit()
     }
 

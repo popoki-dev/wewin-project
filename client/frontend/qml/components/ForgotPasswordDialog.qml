@@ -136,6 +136,8 @@ Popup {
                     label: qsTr("Email")
                     iconName: "mail"
                     placeholderText: "you@company.com"
+                    invalid: AuthViewModel.resetErrorFields.indexOf("email") >= 0
+                    field.onTextEdited: AuthViewModel.resetFieldEdited("email")
                     onAccepted: AuthViewModel.requestResetCode(dialog.server, text)
                 }
                 Label {
@@ -159,6 +161,8 @@ Popup {
                     field.validator: RegularExpressionValidator { regularExpression: /\d{0,6}/ }
                     field.inputMethodHints: Qt.ImhDigitsOnly
                     field.font.letterSpacing: 4
+                    invalid: AuthViewModel.resetErrorFields.indexOf("code") >= 0
+                    field.onTextEdited: AuthViewModel.resetFieldEdited("code")
                     onAccepted: newPassword.forceFocus()
                     labelAccessory: [
                         LinkButton {
@@ -176,6 +180,8 @@ Popup {
                     iconName: "lock"
                     password: true
                     placeholderText: qsTr("At least 8 characters")
+                    invalid: AuthViewModel.resetErrorFields.indexOf("newPassword") >= 0
+                    field.onTextEdited: AuthViewModel.resetFieldEdited("newPassword")
                     onAccepted: confirmPassword.forceFocus()
                 }
                 AppTextField {
@@ -184,7 +190,9 @@ Popup {
                     label: qsTr("Confirm new password")
                     iconName: "lock"
                     password: true
-                    invalid: text.length > 0 && text !== newPassword.text
+                    invalid: (text.length > 0 && text !== newPassword.text)
+                             || AuthViewModel.resetErrorFields.indexOf("confirm") >= 0
+                    field.onTextEdited: AuthViewModel.resetFieldEdited("confirm")
                     onAccepted: submitButton.clicked()
                 }
                 Label {
