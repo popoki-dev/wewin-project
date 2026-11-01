@@ -63,11 +63,27 @@ def new_refresh_token() -> str:
     return secrets.token_urlsafe(48)
 
 
+def new_device_nonce() -> str:
+    return secrets.token_hex(32)
+
+
+def derive_device_secret(user_id: int, device_id: str, nonce: str) -> str:
+    """The HMAC key a bound device signs requests with. Derived, so it is never stored."""
+    return keyed_hash(f"device-secret:{user_id}:{device_id}:{nonce}")
+
+
 def new_reset_code() -> str:
     return f"{secrets.randbelow(10**RESET_CODE_LENGTH):0{RESET_CODE_LENGTH}d}"
 
 
-def create_access_token(user_id: int, organization_id: int, role: str) -> tuple[str, int]:
+def password_version(password_changed_at: datetime) -> int:
+    """Milliseconds since the epoch; access tokens carry it, so a password change voids older ones."""
+    return int(password_changed_at.timestamp() * 1000)
+
+
+def create_access_token(
+    user_id: int, organization_id: int, role: str, password_changed_at: datetime
+) -> tuple[str, int]:
     """Return (token, lifetime_seconds)."""
     lifetime = timedelta(minutes=settings.access_token_minutes)
     now = datetime.now(timezone.utc)
@@ -76,6 +92,7 @@ def create_access_token(user_id: int, organization_id: int, role: str) -> tuple[
         "org": organization_id,
         "role": role,
         "type": "access",
+        "pwv": password_version(password_changed_at),
         "iat": now,
         "exp": now + lifetime,
     }

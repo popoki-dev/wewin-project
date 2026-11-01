@@ -3,12 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
-from ...core.authentication import get_client_info, get_current_user
+from ...core.authentication import get_client_info, get_device_signature, get_signed_in_user
 from ...core.config import settings
 from ...database.session import get_db
 from ...models import User
 from ...repositories.audit_repository import ClientInfo
 from ...schemas.auth import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
     LogoutRequest,
@@ -20,6 +21,7 @@ from ...schemas.auth import (
 from ...schemas.common import MessageResponse
 from ...services import mail_service
 from ...services.auth_service import AuthService
+from ...services.device_service import DeviceSignature
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -36,16 +38,17 @@ def login(
     client: ClientInfo = Depends(get_client_info),
     auth: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
-    return auth.login(body.email, body.password, body.remember_me, client)
+    return auth.login(body.email, body.password, body.remember_me, body.device_id, client)
 
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(
     body: RefreshRequest,
+    signature: DeviceSignature | None = Depends(get_device_signature),
     client: ClientInfo = Depends(get_client_info),
     auth: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
-    return auth.refresh(body.refresh_token, client)
+    return auth.refresh(body.refresh_token, signature, client)
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -59,8 +62,19 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)) -> UserOut:
+def me(user: User = Depends(get_signed_in_user)) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.post("/change-password", response_model=TokenResponse)
+def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_signed_in_user),
+    client: ClientInfo = Depends(get_client_info),
+    auth: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    # Signs every other session out and returns fresh tokens for this one.
+    return auth.change_password(user, body.current_password, body.new_password, body.remember_me, client)
 
 
 @router.post("/forgot-password", response_model=MessageResponse)

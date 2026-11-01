@@ -6,22 +6,18 @@ from server.app.core.permissions import require_role
 from server.app.core.security import hash_password
 from server.app.database.session import SessionLocal
 from server.app.models import User
-from shared.api_contracts import Paths
+from shared.device_signature import device_id_from_mac
 from shared.enums import Role
+from tests.server.helpers import OWNER_EMAIL, OWNER_PASSWORD, sign_in
 
 
 @pytest.fixture()
 def app(app):
-    @app.get("/test/admin-only")
-    def admin_only(user: User = Depends(require_role(Role.ADMIN))):
+    @app.get("/test/leaders-only")
+    def leaders_only(user: User = Depends(require_role(Role.TEAM_LEADER))):
         return {"email": user.email}
 
     return app
-
-
-def token_for(client, email, password):
-    r = client.post(Paths.AUTH_LOGIN, json={"email": email, "password": password})
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 def add_user(email: str, role: Role) -> None:
@@ -32,20 +28,20 @@ def add_user(email: str, role: Role) -> None:
 
 
 def test_role_ranking():
-    assert Role.OWNER.at_least(Role.ADMIN)
-    assert Role.ADMIN.at_least(Role.ADMIN)
-    assert not Role.MEMBER.at_least(Role.ADMIN)
+    assert Role.OWNER.at_least(Role.TEAM_LEADER)
+    assert Role.TEAM_LEADER.at_least(Role.TEAM_LEADER)
+    assert not Role.MEMBER.at_least(Role.TEAM_LEADER)
 
 
-def test_require_role_allows_owner_and_admin_but_not_member(client):
-    add_user("admin@example.com", Role.ADMIN)
+def test_require_role_allows_owner_and_team_leader_but_not_member(client):
+    add_user("leader@example.com", Role.TEAM_LEADER)
     add_user("member@example.com", Role.MEMBER)
 
-    owner = token_for(client, "admin9531@gmail.com", "asdqwe!@#123")
-    admin = token_for(client, "admin@example.com", "Pass-word-1")
-    member = token_for(client, "member@example.com", "Pass-word-1")
+    owner = sign_in(client, OWNER_EMAIL, OWNER_PASSWORD)
+    leader = sign_in(client, "leader@example.com", "Pass-word-1", device_id=device_id_from_mac("02:00:00:00:00:01"))
+    member = sign_in(client, "member@example.com", "Pass-word-1", device_id=device_id_from_mac("02:00:00:00:00:02"))
 
-    assert client.get("/test/admin-only", headers=owner).status_code == 200
-    assert client.get("/test/admin-only", headers=admin).status_code == 200
-    assert client.get("/test/admin-only", headers=member).status_code == 403
-    assert client.get("/test/admin-only").status_code == 401
+    assert owner.get("/test/leaders-only").status_code == 200
+    assert leader.get("/test/leaders-only").status_code == 200
+    assert member.get("/test/leaders-only").status_code == 403
+    assert client.get("/test/leaders-only").status_code == 401

@@ -30,12 +30,16 @@ ApplicationWindow {
     Loader {
         id: pageLoader
         anchors.fill: parent
-        sourceComponent: AuthViewModel.loggedIn ? dashboardComponent : loginComponent
+        // An initial password locks the app until it is changed.
+        sourceComponent: !AuthViewModel.loggedIn ? loginComponent
+                       : AuthViewModel.mustChangePassword ? changePasswordComponent
+                       : dashboardComponent
 
         onLoaded: fade.restart()
         NumberAnimation { id: fade; target: pageLoader.item; property: "opacity"; from: 0; to: 1; duration: 220 }
     }
 
     Component { id: loginComponent; LoginPage {} }
+    Component { id: changePasswordComponent; ChangePasswordPage {} }
     Component { id: dashboardComponent; DashboardPage {} }
 }

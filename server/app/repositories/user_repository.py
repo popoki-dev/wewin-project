@@ -24,6 +24,12 @@ class UserRepository:
     def any_owner(self) -> User | None:
         return self.db.scalar(select(User).where(User.role == Role.OWNER).limit(1))
 
+    def list(self, organization_id: int, team_id: int | None = None) -> list[User]:
+        query = select(User).where(User.organization_id == organization_id).order_by(User.full_name, User.email)
+        if team_id is not None:
+            query = query.where(User.team_id == team_id)
+        return list(self.db.scalars(query))
+
     def add(self, user: User) -> User:
         self.db.add(user)
         self.db.flush()

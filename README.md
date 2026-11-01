@@ -12,7 +12,7 @@ Manage organization members, projects and revenue.
 | Reverse proxy | Caddy (automatic Let's Encrypt HTTPS) |
 | Deployment | Docker Compose on Ubuntu LTS |
 
-**Current milestone:** sign-in with Remember Me, Forgot Password, light/dark themes, roles and audit logging. Members, Projects and Revenue come next.
+**Current milestone:** device-bound sign-in with signed requests, Remember Me, Forgot Password, teams and members (added by the Owner or a Team Leader, with a forced password change at first login), light/dark themes and audit logging. Projects and Revenue come next.
 
 See [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/api.md), [docs/database.md](docs/database.md) and [docs/permissions.md](docs/permissions.md).
 
@@ -35,6 +35,8 @@ python -m client.main
 ```
 
 Sign in with server `localhost:8000`, email `admin9531@gmail.com` and password `asdqwe!@#123`.
+
+The first sign-in binds each account to the computer it's made from; other computers are refused. To try a second computer on one machine, start the client with `WEWIN_DEVICE_MAC=02:00:00:00:00:01` (testing only). To release a binding, use **Reset device** on the Members page, or run `python -m server.manage reset-device <email>` for the Owner.
 
 The client assumes **https://** for any host you type without a scheme. Plain http is used automatically only for `localhost`/`127.0.0.1`, and the login screen warns if you type `http://` for a remote server.
 

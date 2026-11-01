@@ -5,11 +5,14 @@ from client.api.client import ApiResult
 from client.app import storage as storage_module
 from client.app.storage import Storage
 from client.viewmodels.auth_viewmodel import AuthViewModel
+from shared import device_signature as ds
 
+DEVICE_ID = ds.device_id_from_mac("02:00:00:00:00:0A")
 TOKENS = {
     "access_token": "access",
     "refresh_token": "refresh-1",
     "expires_in": 1800,
+    "device_secret": "secret-1",
     "user": {"email": "admin9531@gmail.com", "full_name": "Owner", "role": "owner"},
 }
 
@@ -25,13 +28,21 @@ class FakeAuthApi:
     def __init__(self):
         self.calls = []
         self.results = {}
+        self.signer = None
+
+    def set_signer(self, signer): self.signer = signer
 
     def _answer(self, name, callback, *args):
         self.calls.append((name, *args))
         callback(self.results.get(name, ApiResult(True, 200, {})))
 
     def health(self, server, cb): self._answer("health", cb, server)
-    def login(self, server, email, password, remember, cb): self._answer("login", cb, server, email, password, remember)
+    def login(self, server, email, password, remember, device_id, cb):
+        self._answer("login", cb, server, email, password, remember, device_id)
+
+    def change_password(self, server, token, current, new, remember, cb):
+        self._answer("change_password", cb, server, token, current, new, remember)
+
     def refresh(self, server, token, cb): self._answer("refresh", cb, server, token)
     def logout(self, server, token, cb): self._answer("logout", cb, server, token)
     def forgot_password(self, server, email, cb): self._answer("forgot_password", cb, server, email)
@@ -50,7 +61,7 @@ def api():
 
 
 def make_vm(storage, api):
-    return AuthViewModel(storage, api)
+    return AuthViewModel(storage, api, device_id=lambda: DEVICE_ID)
 
 
 def test_login_validates_before_calling_server(storage, api):
@@ -68,7 +79,7 @@ def test_login_normalizes_input(storage, api):
     api.results["login"] = ApiResult(True, 200, TOKENS)
     vm = make_vm(storage, api)
     vm.login("wewin.example.com", "  Admin9531@Gmail.com ", "pw", False)
-    assert api.calls[0] == ("login", "https://wewin.example.com", "admin9531@gmail.com", "pw", False)
+    assert api.calls[0] == ("login", "https://wewin.example.com", "admin9531@gmail.com", "pw", False, DEVICE_ID)
     assert vm.loggedIn and vm.userRole == "owner"
 
 
@@ -98,6 +109,7 @@ def test_expired_stored_session_shows_message(storage, api):
     storage.remember_me = True
     storage.email = "admin9531@gmail.com"
     storage.save_refresh_token(storage.server_url, storage.email, "stale")
+    storage.save_device_secret(storage.server_url, storage.email, "secret-1")
     api.results["refresh"] = ApiResult(False, 401, {}, "Session expired.")
     vm = make_vm(storage, api)
     vm.restoreSession()
@@ -221,3 +233,68 @@ def test_server_is_not_polled_while_signed_in(storage, api):
     calls = len(api.calls)
     vm._poll_server()
     assert len(api.calls) == calls
+
+
+def test_signed_in_requests_are_signed_with_the_device_secret(storage, api):
+    api.results["login"] = ApiResult(True, 200, TOKENS)
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    headers = api.signer("GET", "/api/teams")
+    assert headers[ds.DEVICE_HEADER] == DEVICE_ID
+    expected = ds.sign("secret-1", DEVICE_ID, "admin9531@gmail.com", headers[ds.TIMESTAMP_HEADER],
+                       headers[ds.NONCE_HEADER], "GET", "/api/teams")
+    assert headers[ds.SIGNATURE_HEADER] == expected
+    vm.logout()
+    assert api.signer is None
+
+
+def test_device_secret_is_kept_only_with_remember_me(storage, api):
+    api.results["login"] = ApiResult(True, 200, TOKENS)
+    make_vm(storage, api).login("localhost:8000", "admin9531@gmail.com", "pw", False)
+    assert storage.load_device_secret("http://localhost:8000", "admin9531@gmail.com") == ""
+    make_vm(storage, api).login("localhost:8000", "admin9531@gmail.com", "pw", True)
+    assert storage.load_device_secret("http://localhost:8000", "admin9531@gmail.com") == "secret-1"
+
+
+def test_restore_signs_the_refresh_and_keeps_the_secret(storage, api):
+    api.results["login"] = ApiResult(True, 200, TOKENS)
+    make_vm(storage, api).login("localhost:8000", "admin9531@gmail.com", "pw", True)
+    refreshed = {**TOKENS, "refresh_token": "refresh-2", "device_secret": None}
+    api.results["refresh"] = ApiResult(True, 200, refreshed)
+    restored = make_vm(storage, api)
+    restored.restoreSession()
+    assert restored.loggedIn and api.signer is not None
+    assert storage.load_device_secret("http://localhost:8000", "admin9531@gmail.com") == "secret-1"
+
+
+def test_restore_without_device_secret_asks_for_sign_in(storage, api):
+    storage.remember_me = True
+    storage.email = "admin9531@gmail.com"
+    storage.save_refresh_token(storage.server_url, storage.email, "refresh-1")
+    vm = make_vm(storage, api)
+    vm.restoreSession()
+    assert not vm.loggedIn and api.calls == []
+
+
+def test_initial_password_must_be_changed(storage, api):
+    first = {**TOKENS, "user": {**TOKENS["user"], "role": "member", "must_change_password": True}}
+    api.results["login"] = ApiResult(True, 200, first)
+    vm = make_vm(storage, api)
+    vm.login("localhost:8000", "admin9531@gmail.com", "Initial-1", False)
+    assert vm.loggedIn and vm.mustChangePassword
+
+    vm.changePassword("Initial-1", "New-pass-1", "other")
+    assert vm.errorFields == ["newPassword", "confirm"]
+    vm.fieldEdited("confirm")
+
+    api.results["change_password"] = ApiResult(False, 400, {}, "Your current password is incorrect.")
+    vm.changePassword("wrong", "New-pass-1", "New-pass-1")
+    assert vm.errorFields == ["current"]
+
+    changed = {**first, "access_token": "access-2", "device_secret": None,
+               "user": {**first["user"], "must_change_password": False}}
+    api.results["change_password"] = ApiResult(True, 200, changed)
+    vm.changePassword("Initial-1", "New-pass-1", "New-pass-1")
+    assert not vm.mustChangePassword and vm.errorMessage == ""
+    assert api.calls[-1] == ("change_password", "http://localhost:8000", "access", "Initial-1", "New-pass-1", False)
+    assert api.signer("GET", "/x")[ds.DEVICE_HEADER] == DEVICE_ID  # still signing with secret-1

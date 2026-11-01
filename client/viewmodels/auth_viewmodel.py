@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from client.api.auth_api import AuthApi
 from client.api.client import ApiResult, is_insecure_remote, normalize_server_url
+from client.app import device
 from client.app.storage import Storage
 from shared.api_contracts import APP_ID, RESET_CODE_LENGTH
+from shared.device_signature import signed_headers
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SESSION_EXPIRED = "Your session has expired. Please sign in again."
@@ -15,7 +18,7 @@ SERVER_POLL_MS = 5_000
 
 
 class AuthViewModel(QObject):
-    """Sign-in, "Remember me" session persistence and password reset, exposed to QML."""
+    """Sign-in, "Remember me" session persistence, device signing and password changes, exposed to QML."""
 
     busyChanged = Signal()
     errorChanged = Signal()
@@ -25,11 +28,21 @@ class AuthViewModel(QObject):
 
     resetCodeSent = Signal(str)
     passwordResetDone = Signal(str)
+    passwordChanged = Signal()
 
-    def __init__(self, storage: Storage, api: AuthApi, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        storage: Storage,
+        api: AuthApi,
+        parent: QObject | None = None,
+        device_id: Callable[[], str] = device.device_id,
+    ) -> None:
         super().__init__(parent)
         self._storage = storage
         self._api = api
+        self._device_id_source = device_id
+        self._device_id = ""
+        self._device_secret = ""
 
         self._busy = False
         self._error = ""
@@ -114,6 +127,31 @@ class AuthViewModel(QObject):
     def serverUrl(self) -> str:
         return self._server
 
+    @Property(bool, notify=sessionChanged)
+    def mustChangePassword(self) -> bool:
+        """True after signing in with an initial password; the app stays locked until it is changed."""
+        return bool(self._user.get("must_change_password"))
+
+    @Property(bool, notify=sessionChanged)
+    def isOwner(self) -> bool:
+        return self._user.get("role") == "owner"
+
+    @Property("QStringList", notify=sessionChanged)
+    def permissions(self) -> list[str]:
+        """Effective permissions (base role plus role bundles), as sent by the server."""
+        return list(self._user.get("permissions", []))
+
+    def has(self, permission: str) -> bool:
+        return permission in self._user.get("permissions", [])
+
+    @Property(bool, notify=sessionChanged)
+    def canManageMembers(self) -> bool:
+        return self.has("members.view")
+
+    @Property(int, notify=sessionChanged)
+    def userTeamId(self) -> int:
+        return self._user.get("team_id") or 0
+
     @Property(bool, notify=resetStateChanged)
     def resetBusy(self) -> bool:
         return self._reset_busy
@@ -129,6 +167,20 @@ class AuthViewModel(QObject):
     def access_token(self) -> str:
         """For other view models that call authenticated endpoints."""
         return self._access_token
+
+    def _get_device_id(self) -> str:
+        if not self._device_id:
+            self._device_id = self._device_id_source()
+        return self._device_id
+
+    def _use_device_secret(self, secret: str, email: str) -> None:
+        """Sign every later request with this PC's device secret (or stop, for "")."""
+        self._device_secret = secret
+        if not secret:
+            self._api.set_signer(None)
+            return
+        device_id = self._get_device_id()
+        self._api.set_signer(lambda method, path: signed_headers(secret, device_id, email, method, path))
 
     # ---------------------------------------------------------------- helpers
     def _set_busy(self, value: bool) -> None:
@@ -174,16 +226,20 @@ class AuthViewModel(QObject):
         self._refresh_token = data["refresh_token"]
         self._remember = remember
         self._user = data.get("user", {})
+        email = self._user.get("email", "")
+        # Sign-in issues a new device secret; refreshes and password changes keep the current one.
+        self._use_device_secret(data.get("device_secret") or self._device_secret, email)
 
         self._storage.server_url = server
         self._storage.remember_me = remember
-        email = self._user.get("email", "")
         if remember:
             self._storage.email = email
             self._storage.save_refresh_token(server, email, self._refresh_token)
+            self._storage.save_device_secret(server, email, self._device_secret)
         else:
             self._storage.email = ""
             self._storage.clear_refresh_token(server, email)
+            self._storage.clear_device_secret(server, email)
 
         # Renew the access token a minute before it expires.
         expires_in = int(data.get("expires_in", 1800))
@@ -192,7 +248,10 @@ class AuthViewModel(QObject):
 
     def _end_session(self) -> None:
         self._refresh_timer.stop()
-        self._storage.clear_refresh_token(self._server, self._user.get("email", ""))
+        email = self._user.get("email", "")
+        self._storage.clear_refresh_token(self._server, email)
+        self._storage.clear_device_secret(self._server, email)
+        self._use_device_secret("", "")
         self._access_token = ""
         self._refresh_token = ""
         self._user = {}
@@ -262,7 +321,7 @@ class AuthViewModel(QObject):
                 fields = ["email", "password"] if result.status == 401 else []
                 self._set_error(result.error, fields=fields, connection=result.status == 0)
 
-        self._api.login(server, email, password, remember, done)
+        self._api.login(server, email, password, remember, self._get_device_id(), done)
 
     @Slot()
     def restoreSession(self) -> None:
@@ -271,10 +330,12 @@ class AuthViewModel(QObject):
             return
         server, email = self._storage.server_url, self._storage.email
         token = self._storage.load_refresh_token(server, email)
-        if not (server and email and token):
+        secret = self._storage.load_device_secret(server, email)
+        if not (server and email and token and secret):
             return
 
         self._set_busy(True)
+        self._use_device_secret(secret, email)
 
         def done(result: ApiResult) -> None:
             self._set_busy(False)
@@ -282,6 +343,8 @@ class AuthViewModel(QObject):
                 self._start_session(server, result.data, remember=True)
             elif result.status == 401:
                 self._storage.clear_refresh_token(server, email)
+                self._storage.clear_device_secret(server, email)
+                self._use_device_secret("", "")
                 self._set_error(SESSION_EXPIRED)
             elif result.status == 0:
                 self._set_server_status("offline")
@@ -304,6 +367,37 @@ class AuthViewModel(QObject):
                 self._set_error(SESSION_EXPIRED)
 
         self._api.refresh(server, self._refresh_token, done)
+
+    @Slot(str, str, str)
+    def changePassword(self, current: str, new_password: str, confirm: str) -> None:
+        if self._busy or not self._access_token:
+            return
+        problem, fields = "", []
+        if not current:
+            problem, fields = "Enter your current password.", ["current"]
+        elif not new_password:
+            problem, fields = "Enter a new password.", ["newPassword"]
+        elif new_password != confirm:
+            problem, fields = "The passwords do not match.", ["newPassword", "confirm"]
+        if problem:
+            self._set_error(problem, fields=fields)
+            return
+
+        self._set_error("")
+        self._set_busy(True)
+        server, remember = self._server, self._remember
+
+        def done(result: ApiResult) -> None:
+            self._set_busy(False)
+            if result.ok:
+                self._start_session(server, result.data, remember)
+                self.passwordChanged.emit()
+            else:
+                # 400: wrong current password; 422: the new one breaks the policy.
+                fields = {400: ["current"], 422: ["newPassword"]}.get(result.status, [])
+                self._set_error(result.error, fields=fields, connection=result.status == 0)
+
+        self._api.change_password(server, self._access_token, current, new_password, remember, done)
 
     @Slot()
     def logout(self) -> None:

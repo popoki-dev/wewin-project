@@ -165,7 +165,7 @@ AuthLayout {
         Layout.fillWidth: true
         Layout.topMargin: 6
         horizontalAlignment: Text.AlignHCenter
-        text: qsTr("Need an account? Ask your organization's owner or admin to invite you.")
+        text: qsTr("Need an account? Ask your organization's Owner or Team Leader to add you.")
         color: Theme.textFaint
         font.pixelSize: 12
         wrapMode: Text.Wrap
