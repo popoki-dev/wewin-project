@@ -162,13 +162,14 @@ def test_owner_deletes_a_team_and_its_members_lose_the_team(client, owner):
     add_member(owner, "c@example.com", support)
 
     r = team_delete(owner, sales)
-    assert r.status_code == 200 and r.json()["message"] == "Team deleted. 2 members now have no team."
+    # Only plain members belong to a team; the leader is counted separately (and demoted).
+    assert r.status_code == 200 and r.json()["message"] == "Team deleted. 1 member now has no team."
 
     teams = owner.get(Paths.TEAMS).json()
     assert [t["name"] for t in teams] == ["Support"]
     by_email = {m["email"]: m for m in owner.get(Paths.MEMBERS).json()}
     assert by_email["a@example.com"]["team_id"] is None and by_email["a@example.com"]["team_name"] is None
-    assert by_email["b@example.com"]["team_id"] is None
+    assert by_email["b@example.com"]["team_id"] is None and by_email["b@example.com"]["led_teams"] == []
     assert by_email["b@example.com"]["role"] == "member"  # the team's leader becomes a regular member
     assert "members.add" not in by_email["b@example.com"]["permissions"]
     assert by_email["c@example.com"]["team_name"] == "Support"  # other teams untouched

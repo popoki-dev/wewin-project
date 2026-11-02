@@ -46,7 +46,9 @@ def test_owner_edits_details(owner, member):
     assert r.status_code == 200
     assert (r.json()["full_name"], r.json()["team_name"]) == ("Samuel", "Support")
     assert member.get(Paths.TEAMS).status_code == 200  # name and team changes keep the session
-    assert audit_details(AuditAction.USER_UPDATED)[-1]["full_name"] == {"from": "Sam", "to": "Samuel"}
+    updates = audit_details(AuditAction.USER_UPDATED)
+    assert {"from": "Sam", "to": "Samuel"} in [d.get("full_name") for d in updates]
+    assert any(d.get("team_id", {}).get("to") == support for d in updates)
 
 
 def test_email_change_signs_the_member_out(client, owner, member):
@@ -117,7 +119,8 @@ def test_team_leader_cannot_move_members_or_change_base_roles(owner, leader, mem
 def test_team_leader_stays_within_own_team(client, owner, leader):
     support = create_team(owner, "Support")
     add_member(owner, "outsider@example.com", support)
-    add_member(owner, "lead2@example.com", member_by_email(owner, "lead@example.com")["team_id"], role="team_leader")
+    sales = member_by_email(owner, "lead@example.com")["led_teams"][0]["id"]
+    add_member(owner, "lead2@example.com", sales, role="team_leader")
     outsider = member_by_email(owner, "outsider@example.com")["id"]
     other_leader = member_by_email(owner, "lead2@example.com")["id"]
     me = member_by_email(owner, "lead@example.com")["id"]
@@ -142,3 +145,80 @@ def test_bundle_can_grant_edit_and_delete(client, owner, team, member):
     peer = member_by_email(owner, "peer@example.com")["id"]
     assert patch(member, Paths.member(peer), {"full_name": "Peer"}).status_code == 200
     assert delete(member, Paths.member(peer)).status_code == 200
+
+
+
+# ------------------------------------------------------------- optional team
+def add_without_team(session, email, role="member"):
+    body = {"email": email, "role": role, "initial_password": "Initial-pass-1"}
+    return session.post(Paths.MEMBERS, body)
+
+
+def set_team(session, user_id, team_id):
+    return patch(session, Paths.member(user_id), {"team_id": team_id})
+
+
+def test_owner_adds_a_member_without_a_team(owner):
+    r = add_without_team(owner, "solo@example.com")
+    assert r.status_code == 201 and r.json()["team_id"] is None
+    assert add_without_team(owner, "lead2@example.com", role="team_leader").status_code == 422
+
+
+def test_owner_clears_and_sets_teams(owner, team, member):
+    r = set_team(owner, member.id, None)
+    assert r.status_code == 200 and r.json()["team_id"] is None
+    assert set_team(owner, member.id, team).json()["team_name"] == "Sales"
+
+
+def test_team_leaders_need_a_team(owner, team, leader):
+    lead_id = member_by_email(owner, "lead@example.com")["id"]
+    assert set_team(owner, lead_id, None).status_code == 422
+    assert member_by_email(owner, "lead@example.com")["led_teams"] == [{"id": team, "name": "Sales"}]  # nothing saved
+    # Demoting in the same request makes it fine.
+    r = patch(owner, Paths.member(lead_id), {"team_id": None, "role": "member"})
+    assert r.status_code == 200 and (r.json()["role"], r.json()["team_id"]) == ("member", None)
+
+    solo = add_without_team(owner, "solo@example.com").json()["id"]
+    assert patch(owner, Paths.member(solo), {"role": "team_leader"}).status_code == 422
+    assert patch(owner, Paths.member(solo), {"role": "team_leader", "team_id": team}).status_code == 200
+
+
+def test_team_leader_sees_and_brings_in_members_without_a_team(owner, leader, team):
+    solo = add_without_team(owner, "solo@example.com").json()["id"]
+    assert "solo@example.com" in {m["email"] for m in leader.get(Paths.MEMBERS).json()}
+    r = set_team(leader, solo, team)
+    assert r.status_code == 200 and r.json()["team_name"] == "Sales"
+
+
+def test_team_leader_takes_members_out_of_own_team(owner, leader, team, member):
+    r = set_team(leader, member.id, None)
+    assert r.status_code == 200 and r.json()["team_id"] is None
+    assert member.get(Paths.TEAMS).json() == []  # the member keeps their account and session
+
+
+def test_team_leader_moves_are_limited(owner, leader, team, member):
+    support = create_team(owner, "Support")
+    add_member(owner, "other@example.com", support)
+    other = member_by_email(owner, "other@example.com")["id"]
+    lead_id = member_by_email(owner, "lead@example.com")["id"]
+    solo = add_without_team(owner, "solo@example.com").json()["id"]
+
+    assert set_team(leader, member.id, support).status_code == 403  # to another team
+    assert set_team(leader, other, None).status_code == 403  # out of another team
+    assert set_team(leader, other, team).status_code == 403  # poach from another team
+    assert set_team(leader, solo, support).status_code == 403  # into another team
+    assert set_team(leader, lead_id, None).status_code == 403  # themselves
+
+
+def test_team_leader_adds_to_own_team_by_default(owner, leader, team):
+    r = add_without_team(leader, "new@example.com")
+    assert r.status_code == 201 and r.json()["team_id"] == team
+
+
+def test_moving_teams_needs_the_permission(client, owner, team, member):
+    add_member(owner, "peer@example.com", team)
+    peer = member_by_email(owner, "peer@example.com")["id"]
+    assert set_team(member, peer, None).status_code == 403
+    bundle = create_bundle(owner, "Team moves", ["members.team"])
+    patch(owner, Paths.member(member.id), {"role_bundle_ids": [bundle]})
+    assert set_team(member, peer, None).status_code == 200

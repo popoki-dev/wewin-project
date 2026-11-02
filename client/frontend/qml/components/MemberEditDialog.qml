@@ -21,8 +21,9 @@ AppDialog {
         emailField.text = m.email
         activeBox.checked = m.is_active
         passwordField.text = ""
-        teamBox.model = MembersViewModel.teams.map(t => ({ value: t.id, text: t.name }))
-        teamBox.selectValue(m.team_id)
+        teamBox.model = [{ value: 0, text: qsTr("No team") }]
+            .concat(MembersViewModel.teams.map(t => ({ value: t.id, text: t.name })))
+        teamBox.selectValue(m.team_id || 0)
         MembersViewModel.clearMessages()
         open()
     }
@@ -67,11 +68,21 @@ AppDialog {
         }
         AppComboBox {
             id: teamBox
-            // Only the Owner moves people between teams; the Owner has no team.
-            visible: AuthViewModel.isOwner && !dialog.isOwnerAccount
+            // Only the Owner moves people between teams; the Owner has no team, and Team
+            // Leaders' teams are managed on the Teams tab.
+            visible: AuthViewModel.isOwner && !dialog.isOwnerAccount && dialog.member.role !== "team_leader"
             Layout.fillWidth: true
             label: qsTr("Team")
             invalid: MembersViewModel.errorFields.indexOf("team") >= 0
+        }
+        Label {
+            visible: dialog.member.role === "team_leader"
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: 12
+            text: qsTr("Leads %1. Change which teams on the Teams tab (Manage).")
+                  .arg((dialog.member.led_teams || []).map(t => t.name).join(", "))
         }
         AppTextField {
             id: passwordField
@@ -109,7 +120,7 @@ AppDialog {
                 enabled: !MembersViewModel.busy
                 onClicked: MembersViewModel.saveMember(
                     dialog.member, nameField.text, emailField.text,
-                    teamBox.visible && teamBox.currentValue !== undefined ? teamBox.currentValue : 0,
+                    teamBox.visible && teamBox.currentValue !== undefined ? teamBox.currentValue : -1,
                     dialog.isSelf ? true : activeBox.checked, passwordField.text)
             }
         }

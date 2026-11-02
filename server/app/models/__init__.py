@@ -6,7 +6,7 @@ from .base import Base
 from .device import Device, DeviceRequestNonce
 from .organization import Organization
 from .role_bundle import RoleBundle, user_role_bundles
-from .team import Team
+from .team import Team, team_leaders
 from .user import User
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "RefreshSession",
     "RoleBundle",
     "Team",
+    "team_leaders",
     "User",
     "user_role_bundles",
 ]

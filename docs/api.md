@@ -101,7 +101,7 @@ On success, all of the user's sessions are revoked, and `must_change_password` i
 See [permissions.md](permissions.md) for who can do what.
 
 ### `GET /api/teams` 🔒
-`200 [{"id": 1, "name": "Sales", "member_count": 3}]`. Holders of the Owner role, `teams.create` or `teams.rename` get every team; anyone else gets only their own team.
+`200 [{"id": 1, "name": "Sales", "member_count": 3, "leaders": [{"id": 4, "name": "Lena"}]}]`. `member_count` counts plain members only. Holders of the Owner role, `teams.create` or `teams.rename` get every team; anyone else gets only their own team.
 
 ### `POST /api/teams` 🔒 `teams.create`
 `{"name": "Sales"}` → `201` with the team. Returns `409` if the organization already has a team with that name (case-insensitive).
@@ -109,15 +109,29 @@ See [permissions.md](permissions.md) for who can do what.
 ### `PATCH /api/teams/{id}` 🔒 `teams.rename`
 `{"name": "Sales EMEA"}` → `200` with the team. Returns `404` for an unknown team, or `409` if the name is taken.
 
+### `POST /api/teams/{id}/leaders` 🔒 Owner
+`{"user_id": 5}` → `200` with the member.
+
+- **A plain member** becomes a Team Leader of this team and leaves their own team.
+- **A Team Leader** leads this team in addition to their others.
+- **Errors:** `422` for the Owner as target, `404` for an unknown team or person.
+
+### `DELETE /api/teams/{id}/leaders/{user_id}` 🔒 Owner
+`200` with the member: they no longer lead this team. If it was their last team, they become a plain member with no team. Returns `404` if they don't lead it.
+
 ### `DELETE /api/teams/{id}` 🔒 Owner
 `200 {"message": "Team deleted. 2 members now have no team."}`
 
 - **Members:** they keep their accounts, with `team_id: null`, until the Owner assigns a new team with `PATCH /api/members/{id}`.
-- **Team Leaders:** the team's leaders become regular members (`role: "member"`). They lose Team Leader permissions on their next request; their role bundles are kept.
+- **Team Leaders:** the team's leaders stop leading it. Those who lead no other team become regular members (`role: "member"`) and lose Team Leader permissions on their next request. Their role bundles are kept.
 - **Errors:** `403` for anyone but the Owner, `404` for an unknown team.
 
 ### `GET /api/members` 🔒 `members.view`
-`200` returns a list of members. The Owner gets everyone; a Team Leader gets their own team. Each member looks like this:
+`200` returns a list of members.
+- **The Owner** gets everyone.
+- **Anyone else** gets their own team, plus, with `members.team`, members who have no team, so they can be brought in.
+
+Each member looks like this:
 ```json
 {"id": 5, "email": "…", "full_name": "…", "role": "member", "team_id": 1, "team_name": "Sales",
  "is_active": true, "must_change_password": true, "device_registered": false, "last_login_at": null,
@@ -125,7 +139,11 @@ See [permissions.md](permissions.md) for who can do what.
 ```
 
 ### `POST /api/members` 🔒 `members.add`
-`{"email": "…", "full_name": "…", "team_id": 1, "role": "member" | "team_leader", "initial_password": "…", "role_bundle_ids": [2]}` → `201` with the member. `role_bundle_ids` is optional.
+`{"email": "…", "full_name": "…", "team_id": 1, "role": "member" | "team_leader", "initial_password": "…", "role_bundle_ids": [2]}` → `201` with the member.
+
+- **Optional fields:** `role_bundle_ids` and `team_id`.
+- **The Owner** may leave out `team_id` (or send `null`) to add someone with no team. A Team Leader still needs a team (`422`).
+- **Everyone else** adds to one of their teams. An omitted `team_id` works only when they have exactly one team; otherwise it's `422 Select a team.`
 
 The new account must change its password at first sign-in.
 
@@ -144,16 +162,20 @@ The new account must change its password at first sign-in.
 → `200` with the member.
 
 - **All fields are optional;** an omitted field is left unchanged.
+- **`team_id`** is applied whenever it's sent, so `"team_id": null` takes the member out of their team.
+  - The Owner can move anyone anywhere.
+  - Holders of `members.team` (Team Leaders by default) can only bring a plain member with no team into their own team, or take a plain member of their own team out of it.
+  - A Team Leader must always have a team (`422 A Team Leader must belong to a team.`, and nothing is saved). To clear a leader's team, also send `"role": "member"`.
 - **`role_bundle_ids`** replaces the member's whole set.
 - **`new_password`** sets a new initial password that the member must change at their next sign-in.
 - **Sign-out:** changing `email`, setting `new_password` or setting `is_active: false` revokes the member's sessions. An email change also invalidates their device signatures, because the email is part of every signature.
 
 | Status | When |
 |---|---|
-| 403 | The caller lacks the permission for the change: `members.edit` for details, the Owner for `team_id` and `role`, or `members.assign_roles` plus every permission in each bundle added or removed. Also returned for a target outside a non-owner's own team's plain members, or for bundle changes on the Owner. |
+| 403 | The caller lacks the permission for the change: `members.edit` for details, the Owner or `members.team` (within the limits above) for `team_id`, the Owner for `role`, or `members.assign_roles` plus every permission in each bundle added or removed. Also returned for a target outside a non-owner's own team's plain members, or for bundle changes on the Owner. |
 | 404 | The member, team or a role bundle doesn't exist. |
 | 409 | The new email is already registered. |
-| 422 | `new_password` fails the policy, or someone tried to disable themselves, set their own password, or put the Owner in a team. |
+| 422 | `new_password` fails the policy; someone tried to disable themselves, set their own password, or put the Owner in a team; or a Team Leader would be left without a team. |
 
 ### `DELETE /api/members/{id}` 🔒 `members.delete`
 `200 {"message": "Member deleted."}`. The account is deleted along with its device binding, sessions and role bundle assignments. The audit log records the deleted email and name.

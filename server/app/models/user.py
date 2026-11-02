@@ -11,10 +11,10 @@ from shared.permissions import Permission, effective_permissions
 
 from .base import AwareDateTime, Base, utcnow
 from .role_bundle import RoleBundle, user_role_bundles
+from .team import Team, team_leaders
 
 if TYPE_CHECKING:
     from .organization import Organization
-    from .team import Team
 
 
 class User(Base):
@@ -22,7 +22,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
-    # Members and team leaders belong to one team; the owner to none.
+    # A plain member's team (or none). Team Leaders use led_teams instead; the Owner has neither.
     team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     # Sign-in is by email alone, so emails are unique across organizations.
     email: Mapped[str] = mapped_column(String(255), unique=True)
@@ -45,6 +45,7 @@ class User(Base):
 
     organization: Mapped[Organization] = relationship(back_populates="users")
     team: Mapped[Team | None] = relationship()
+    led_teams: Mapped[list[Team]] = relationship(secondary=team_leaders, lazy="selectin", order_by=Team.name)
     role_bundles: Mapped[list[RoleBundle]] = relationship(
         secondary=user_role_bundles, lazy="selectin", order_by=RoleBundle.name
     )
@@ -53,6 +54,10 @@ class User(Base):
     def permissions(self) -> set[Permission]:
         """Base role permissions plus those of every assigned role bundle."""
         return effective_permissions(self.role, (p for b in self.role_bundles for p in b.permissions))
+
+    @property
+    def led_team_ids(self) -> list[int]:
+        return [t.id for t in self.led_teams]
 
     def can(self, permission: Permission) -> bool:
         return permission in self.permissions

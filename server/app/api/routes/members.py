@@ -19,6 +19,7 @@ from ...schemas.members import (
     RoleBundleIn,
     RoleBundleOut,
     TeamCreate,
+    TeamLeaderAdd,
     TeamOut,
 )
 from ...services.member_service import MemberService
@@ -75,6 +76,29 @@ def delete_team(
     moved = members.delete_team(user, team_id, client)
     who = "1 member now has" if moved == 1 else f"{moved} members now have"
     return MessageResponse(message=f"Team deleted. {who} no team." if moved else "Team deleted.")
+
+
+@router.post("/teams/{team_id}/leaders", response_model=MemberOut)
+def add_team_leader(
+    team_id: int,
+    body: TeamLeaderAdd,
+    user: User = Depends(require_role(Role.OWNER)),
+    client: ClientInfo = Depends(get_client_info),
+    members: MemberService = Depends(get_member_service),
+) -> MemberOut:
+    # A plain member becomes a Team Leader; a Team Leader leads this team as well.
+    return members.add_team_leader(user, team_id, body.user_id, client)
+
+
+@router.delete("/teams/{team_id}/leaders/{user_id}", response_model=MemberOut)
+def remove_team_leader(
+    team_id: int,
+    user_id: int,
+    user: User = Depends(require_role(Role.OWNER)),
+    client: ClientInfo = Depends(get_client_info),
+    members: MemberService = Depends(get_member_service),
+) -> MemberOut:
+    return members.remove_team_leader(user, team_id, user_id, client)
 
 
 # -------------------------------------------------------------------- members
