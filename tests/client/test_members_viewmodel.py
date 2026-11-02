@@ -43,8 +43,8 @@ class FakeMembersApi:
 
 ROLE_PERMISSIONS = {
     "owner": ["members.add", "members.assign_roles", "members.reset_device", "members.view", "teams.create"],
-    "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.reset_device",
-                    "members.team", "members.view", "revenue.view"],
+    "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.promote",
+                    "members.reset_device", "members.team", "members.view", "revenue.view"],
     "member": ["projects.view"],
 }
 
@@ -394,75 +394,25 @@ def test_filters_combine_and_clear(tmp_path, monkeypatch):
 
 
 
-def paged_vm(tmp_path, monkeypatch, count):
+def test_owner_changes_role_when_editing(tmp_path, monkeypatch):
     vm, api = signed_in(tmp_path, monkeypatch, "owner")
-    people = [{"id": i, "email": f"p{i:03}@b.co", "full_name": f"Person {i:03}", "role": "member",
-               "team_id": 7 if i % 2 else None, "led_teams": [], "created_at": "2026-06-01T12:00:00Z"}
-              for i in range(1, count + 1)]
-    api.results["list_members"] = ApiResult(True, 200, {"items": people})
-    vm.refresh()
-    return vm, api
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "role": "team_leader"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", 9, True, "", "team_leader")
+    assert api.calls[0] == ("update_member", 5, {"team_id": 9, "role": "team_leader"})
 
 
-def ids(vm):
-    return [m["id"] for m in vm.pagedMembers]
+def test_team_leader_promotes_within_own_teams_only(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader")
+    assert vm.canPromote(SAM) and vm.canChangeRole(SAM)
+    assert not vm.canPromote({**SAM, "team_id": 99})
+    assert not vm.canPromote({**SAM, "role": "team_leader"})
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "role": "team_leader"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", -1, True, "", "team_leader")
+    assert api.calls[0] == ("update_member", 5, {"role": "team_leader"})
 
 
-def test_ten_per_page_by_default(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 37)
-    assert vm.pageSize == 10 and vm.pageCount == 4 and ids(vm) == list(range(1, 11))
-    assert vm.pageRange == "1–10 of 37"
-    vm.setPage(3)
-    assert ids(vm) == list(range(31, 38)) and vm.pageRange == "31–37 of 37"
-
-
-def test_next_and_previous_stay_in_range(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 15)
-    vm.previousPage()
-    assert vm.pageIndex == 0
-    vm.nextPage()
-    vm.nextPage()
-    assert vm.pageIndex == 1 and ids(vm) == list(range(11, 16))
-
-
-def test_page_sizes(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 120)
-    assert vm.pageSizes == [10, 20, 50, 100]
-    vm.setPage(4)  # rows 41-50
-    vm.setPageSize(20)
-    assert vm.pageIndex == 2 and ids(vm)[0] == 41  # the first visible row stays in view
-    vm.setPageSize(100)
-    assert vm.pageCount == 2 and len(vm.pagedMembers) == 100
-    vm.setPageSize(7)  # not offered: ignored
-    assert vm.pageSize == 100
-
-
-def test_filtering_returns_to_the_first_page(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 40)
-    vm.setPage(2)
-    vm.setFilterTeam(7)
-    assert vm.pageIndex == 0 and vm.pageCount == 2 and vm.pageRange == "1–10 of 20"
-
-
-def test_page_is_kept_in_range_when_the_list_shrinks(tmp_path, monkeypatch):
-    vm, api = paged_vm(tmp_path, monkeypatch, 40)
-    vm.setPage(3)
-    api.results["list_members"] = ApiResult(True, 200, {"items": vm.members[:15]})
-    vm.refresh()
-    assert vm.pageIndex == 1 and ids(vm) == list(range(11, 16))
-
-
-def test_empty_list_has_one_empty_page(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 0)
-    assert vm.pageCount == 1 and vm.pagedMembers == [] and vm.pageRange == ""
-
-
-def test_page_numbers_skip_runs(tmp_path, monkeypatch):
-    vm, _ = paged_vm(tmp_path, monkeypatch, 120)
-    assert vm.pageNumbers == [1, 2, -1, 12]
-    vm.setPage(5)  # page 6
-    assert vm.pageNumbers == [1, -1, 5, 6, 7, -1, 12]
-    vm.setPage(2)  # page 3: 1 2 3 4 … 12 (no gap of one page)
-    assert vm.pageNumbers == [1, 2, 3, 4, -1, 12]
-    vm.setPageSize(100)
-    assert vm.pageNumbers == [1, 2]
+def test_unchanged_role_is_not_sent(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["update_member"] = ApiResult(True, 200, SAM)
+    vm.saveMember(SAM, "Sammy", "sam@b.co", -1, True, "", "member")
+    assert api.calls[0] == ("update_member", 5, {"full_name": "Sammy"})

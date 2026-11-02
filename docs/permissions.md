@@ -18,7 +18,7 @@ The catalog is in `shared/permissions.py`:
 
 | Group | Permissions |
 |---|---|
-| Members | `members.view`, `members.add`, `members.edit`, `members.delete`, `members.team`, `members.reset_device`, `members.assign_roles` |
+| Members | `members.view`, `members.add`, `members.edit`, `members.delete`, `members.team`, `members.promote`, `members.reset_device`, `members.assign_roles` |
 | Teams | `teams.create`, `teams.rename` |
 | Projects (enforced once the module exists) | `projects.view`, `projects.create`, `projects.edit` |
 | Revenue (enforced once the module exists) | `revenue.view`, `revenue.edit` |
@@ -35,7 +35,9 @@ Rules:
    - The Owner can assign any bundle to anyone except themselves; the Owner already has every permission.
    - Anyone else needs `members.assign_roles`, and can add or remove a bundle only if they hold **every** permission in it. So nobody can grant more than they have.
 3. **Scope for non-owners:** a non-owner acts only on plain members of **their teams**, never on themselves or on Team Leaders. "Their teams" means every team a Team Leader leads (a Team Leader may lead several), or a member's own team. This applies to adding, editing, deleting, resetting devices and assigning bundles. `teams.*` permissions apply across the whole organization.
-4. **Owner only:** changing a member's base role (Member ↔ Team Leader) and moving members freely between teams.
+4. **Base roles.**
+   - **The Owner** sets anyone's role (Member or Team Leader) in the Edit dialog and moves members freely between teams.
+   - **Holders of `members.promote`** (Team Leaders by default) can make a plain member of one of their teams a Team Leader of that same team, so a team can have several leaders. Only the Owner turns a Team Leader back into a Member.
    - **Members without a team:** the Owner can add members with no team, or clear anyone's team.
    - **Team Leaders** must always lead at least one team. The Owner assigns them on the Teams tab (Manage → Add as leader); a plain member added as leader is promoted. Removing a leader's last team, or deleting it, makes them a plain member.
    - **Team membership (`members.team`)** lets a non-owner do two things: bring a plain member who has no team into their own team, or take a plain member out of their own team. The account stays, with no team. Such users also see members with no team in their list.
@@ -92,7 +94,8 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | Delete a member | | own team's members | anyone but the Owner |
 | Reset a member's device | | own team's members | anyone but themselves (CLI for that) |
 | Assign role bundles | | own team's members, bundles within own permissions | anyone but themselves |
-| Change base roles | | | ✓ |
+| Make a team member a Team Leader (of the same team) | | own teams' members | ✓ |
+| Make a Team Leader a Member | | | ✓ |
 | Create, rename teams | | | ✓ |
 | Delete teams (members keep their accounts with no team; its Team Leaders become members) | | | ✓ |
 | Define role bundles | | | ✓ |

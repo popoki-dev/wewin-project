@@ -13,6 +13,10 @@ AppDialog {
     property bool confirmingDelete: false
     readonly property bool isSelf: member.email === AuthViewModel.userEmail
     readonly property bool isOwnerAccount: member.role === "owner"
+    readonly property bool canChangeRole: MembersViewModel.canChangeRole(member)
+    readonly property string roleChoice: roleBox.currentValue !== undefined ? roleBox.currentValue : (member.role || "")
+    readonly property bool promoting: member.role === "member" && roleChoice === "team_leader"
+    readonly property bool demoting: member.role === "team_leader" && roleChoice === "member"
 
     function openFor(m) {
         member = m
@@ -24,6 +28,7 @@ AppDialog {
         teamBox.model = [{ value: 0, text: qsTr("No team") }]
             .concat(MembersViewModel.teams.map(t => ({ value: t.id, text: t.name })))
         teamBox.selectValue(m.team_id || 0)
+        roleBox.selectValue(m.role)
         MembersViewModel.clearMessages()
         open()
     }
@@ -67,16 +72,40 @@ AppDialog {
             field.onTextEdited: MembersViewModel.fieldEdited("email")
         }
         AppComboBox {
-            id: teamBox
-            // Only the Owner moves people between teams; the Owner has no team, and Team
-            // Leaders' teams are managed on the Teams tab.
-            visible: AuthViewModel.isOwner && !dialog.isOwnerAccount && dialog.member.role !== "team_leader"
+            id: roleBox
+            visible: dialog.canChangeRole
             Layout.fillWidth: true
-            label: qsTr("Team")
-            invalid: MembersViewModel.errorFields.indexOf("team") >= 0
+            label: qsTr("Role")
+            model: [{ value: "member", text: qsTr("Member") }, { value: "team_leader", text: qsTr("Team Leader") }]
+            onActivated: {
+                // Promotion leads the member's current team; demotion starts with no team.
+                if (dialog.promoting) teamBox.selectValue(dialog.member.team_id || 0)
+                else if (dialog.demoting) teamBox.selectValue(0)
+                else teamBox.selectValue(dialog.member.team_id || 0)
+            }
         }
         Label {
-            visible: dialog.member.role === "team_leader"
+            visible: !AuthViewModel.isOwner && dialog.promoting
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: 12
+            text: qsTr("%1 will become a Team Leader of %2, alongside its current leaders.")
+                  .arg(dialog.member.full_name || dialog.member.email || "").arg(dialog.member.team_name || "")
+        }
+        AppComboBox {
+            id: teamBox
+            // Only the Owner moves people between teams; the Owner has no team. A Team Leader's
+            // teams are managed on the Teams tab, unless they are being made a Member here.
+            visible: AuthViewModel.isOwner && !dialog.isOwnerAccount
+                     && (dialog.member.role === "member" || dialog.demoting)
+            Layout.fillWidth: true
+            label: dialog.roleChoice === "team_leader" ? qsTr("Team to lead") : qsTr("Team")
+            invalid: MembersViewModel.errorFields.indexOf("team") >= 0
+            onActivated: MembersViewModel.fieldEdited("team")
+        }
+        Label {
+            visible: dialog.member.role === "team_leader" && !dialog.demoting
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             color: Theme.textMuted
@@ -121,7 +150,8 @@ AppDialog {
                 onClicked: MembersViewModel.saveMember(
                     dialog.member, nameField.text, emailField.text,
                     teamBox.visible && teamBox.currentValue !== undefined ? teamBox.currentValue : -1,
-                    dialog.isSelf ? true : activeBox.checked, passwordField.text)
+                    dialog.isSelf ? true : activeBox.checked, passwordField.text,
+                    dialog.canChangeRole ? dialog.roleChoice : "")
             }
         }
     }
