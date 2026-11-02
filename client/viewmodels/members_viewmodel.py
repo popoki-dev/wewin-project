@@ -26,6 +26,7 @@ class MembersViewModel(QObject):
     memberAdded = Signal(str)
     teamCreated = Signal(str)
     teamRenamed = Signal(str)
+    teamDeleted = Signal(str)
     bundleSaved = Signal()
     memberRolesSaved = Signal()
     memberSaved = Signal()
@@ -230,6 +231,18 @@ class MembersViewModel(QObject):
             self.refresh()
 
         self._call(self._api.rename_team, team_id, name, on_ok=renamed, fields_by_status={409: ["teamName"]})
+
+    @Slot("QVariant")
+    def deleteTeam(self, team: dict) -> None:
+        """Owner only: the team's members stay with no team; its Team Leaders become members."""
+
+        def deleted(data: dict) -> None:
+            self.teamDeleted.emit(team["name"])
+            message = data.get("message", "Team deleted.")
+            self._set_state(False, notice=message.replace("Team deleted.", f"Team “{team['name']}” deleted.", 1))
+            self.refresh()
+
+        self._call(self._api.delete_team, team["id"], on_ok=deleted)
 
     @Slot(str, str, int, str, str, "QVariantList")
     def addMember(

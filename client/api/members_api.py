@@ -20,6 +20,9 @@ class MembersApi:
     def rename_team(self, server: str, token: str, team_id: int, name: str, callback: Callback) -> None:
         self._client.patch(server, Paths.team(team_id), {"name": name}, callback, token)
 
+    def delete_team(self, server: str, token: str, team_id: int, callback: Callback) -> None:
+        self._client.delete(server, Paths.team(team_id), callback, token)
+
     def list_members(self, server: str, token: str, callback: Callback) -> None:
         self._client.get(server, Paths.MEMBERS, callback, token)
 

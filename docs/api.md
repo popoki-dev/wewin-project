@@ -109,6 +109,13 @@ See [permissions.md](permissions.md) for who can do what.
 ### `PATCH /api/teams/{id}` 🔒 `teams.rename`
 `{"name": "Sales EMEA"}` → `200` with the team. Returns `404` for an unknown team, or `409` if the name is taken.
 
+### `DELETE /api/teams/{id}` 🔒 Owner
+`200 {"message": "Team deleted. 2 members now have no team."}`
+
+- **Members:** they keep their accounts, with `team_id: null`, until the Owner assigns a new team with `PATCH /api/members/{id}`.
+- **Team Leaders:** the team's leaders become regular members (`role: "member"`). They lose Team Leader permissions on their next request; their role bundles are kept.
+- **Errors:** `403` for anyone but the Owner, `404` for an unknown team.
+
 ### `GET /api/members` 🔒 `members.view`
 `200` returns a list of members. The Owner gets everyone; a Team Leader gets their own team. Each member looks like this:
 ```json

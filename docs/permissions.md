@@ -89,6 +89,7 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | Assign role bundles | | own team's members, bundles within own permissions | anyone but themselves |
 | Change base roles | | | ✓ |
 | Create, rename teams | | | ✓ |
+| Delete teams (members keep their accounts with no team; its Team Leaders become members) | | | ✓ |
 | Define role bundles | | | ✓ |
 | *Planned:* manage projects | view | ✓ | ✓ |
 | *Planned:* view/edit revenue | | ✓ | ✓ |

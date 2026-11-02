@@ -41,6 +41,7 @@ class AuditAction(str, enum.Enum):
     USER_DELETED = "user.deleted"
     TEAM_CREATED = "team.created"
     TEAM_RENAMED = "team.renamed"
+    TEAM_DELETED = "team.deleted"
     ROLE_BUNDLE_CREATED = "role_bundle.created"
     ROLE_BUNDLE_UPDATED = "role_bundle.updated"
     ROLE_BUNDLE_DELETED = "role_bundle.deleted"

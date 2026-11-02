@@ -1,5 +1,8 @@
 import pytest
+from sqlalchemy import select
 
+from server.app.database.session import SessionLocal
+from server.app.models import AuditLog
 from shared.api_contracts import Paths
 from shared.device_signature import device_id_from_mac
 from tests.server.helpers import sign_in
@@ -143,3 +146,56 @@ def test_device_reset_by_owner_and_team_leader(client, owner, leader):
     assert leader.post(Paths.member_device_reset(by_email["admin9531@gmail.com"]["id"])).status_code == 403
     assert owner.post(Paths.member_device_reset(by_email["theirs@example.com"]["id"])).status_code == 200
     assert owner.post(Paths.member_device_reset(99999)).status_code == 404
+
+
+# ------------------------------------------------------------- team deletion
+def team_delete(session, team_id):
+    path = Paths.team(team_id)
+    return session.client.delete(path, headers=session.headers("DELETE", path))
+
+
+def test_owner_deletes_a_team_and_its_members_lose_the_team(client, owner):
+    sales = create_team(owner, "Sales")
+    support = create_team(owner, "Support")
+    add_member(owner, "a@example.com", sales)
+    add_member(owner, "b@example.com", sales, role="team_leader")
+    add_member(owner, "c@example.com", support)
+
+    r = team_delete(owner, sales)
+    assert r.status_code == 200 and r.json()["message"] == "Team deleted. 2 members now have no team."
+
+    teams = owner.get(Paths.TEAMS).json()
+    assert [t["name"] for t in teams] == ["Support"]
+    by_email = {m["email"]: m for m in owner.get(Paths.MEMBERS).json()}
+    assert by_email["a@example.com"]["team_id"] is None and by_email["a@example.com"]["team_name"] is None
+    assert by_email["b@example.com"]["team_id"] is None
+    assert by_email["b@example.com"]["role"] == "member"  # the team's leader becomes a regular member
+    assert "members.add" not in by_email["b@example.com"]["permissions"]
+    assert by_email["c@example.com"]["team_name"] == "Support"  # other teams untouched
+    assert team_delete(owner, sales).status_code == 404
+
+
+def test_member_without_team_can_be_given_a_new_one(client, owner):
+    sales = create_team(owner, "Sales")
+    add_member(owner, "a@example.com", sales)
+    team_delete(owner, sales)
+    support = create_team(owner, "Support")
+    a = next(m for m in owner.get(Paths.MEMBERS).json() if m["email"] == "a@example.com")
+    path = Paths.member(a["id"])
+    r = owner.client.patch(path, json={"team_id": support}, headers=owner.headers("PATCH", path))
+    assert r.status_code == 200 and r.json()["team_name"] == "Support"
+
+
+def test_only_the_owner_deletes_teams(client, owner, leader):
+    assert team_delete(leader, leader.team_id).status_code == 403
+    assert team_delete(owner, 99999).status_code == 404
+
+
+def test_team_leader_of_a_deleted_team_becomes_a_member(client, owner, leader):
+    team_delete(owner, leader.team_id)
+    assert leader.get(Paths.AUTH_ME).json()["role"] == "member"  # takes effect on the next request
+    assert leader.get(Paths.MEMBERS).status_code == 403
+    assert leader.get(Paths.TEAMS).json() == []
+    with SessionLocal() as db:
+        details = db.scalars(select(AuditLog.details).where(AuditLog.action == "team.deleted")).one()
+    assert details["leaders_demoted"] == ["lead@example.com"]

@@ -23,6 +23,82 @@ Item {
 
     TeamDialog { id: teamDialog; objectName: "teamDialog" }
 
+    // Owner only. The team's members are kept, with no team; its Team Leaders become members.
+    AppDialog {
+        id: deleteDialog
+        objectName: "teamDeleteDialog"
+        property var team: ({})
+        readonly property var leaders: team.id ? page.leadersOf(team.id) : []
+        function openFor(t) {
+            team = t
+            MembersViewModel.clearMessages()
+            open()
+        }
+        title: qsTr("Delete “%1”?").arg(team.name || "")
+        subtitle: qsTr("The team is removed for good. Its members keep their accounts.")
+        iconName: "alert"
+        onClosed: if (MembersViewModel.errorMessage) MembersViewModel.clearMessages()
+
+        Connections {
+            target: MembersViewModel
+            function onTeamDeleted() { if (deleteDialog.opened) deleteDialog.close() }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.text
+            font.pixelSize: 13
+            text: deleteDialog.team.member_count > 0
+                  ? qsTr("%1 will have no team until you assign a new one with Edit on the Members page.")
+                        .arg(page.membersText(deleteDialog.team.member_count))
+                  : qsTr("The team has no members.")
+        }
+        Label {
+            visible: deleteDialog.leaders.length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.warning
+            font.pixelSize: 13
+            text: qsTr("%1 will become a regular member and lose Team Leader permissions.")
+                  .arg(deleteDialog.leaders.join(", "))
+        }
+        Banner { Layout.fillWidth: true; kind: "error"; text: deleteDialog.opened ? MembersViewModel.errorMessage : "" }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            AppButton {
+                variant: "secondary"
+                text: qsTr("Cancel")
+                Layout.fillWidth: true
+                onClicked: deleteDialog.close()
+            }
+            Button {
+                id: confirmDelete
+                Layout.fillWidth: true
+                implicitHeight: Theme.controlHeight
+                enabled: !MembersViewModel.busy
+                hoverEnabled: true
+                text: qsTr("Delete team")
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+                onClicked: MembersViewModel.deleteTeam(deleteDialog.team)
+                background: Rectangle {
+                    radius: Theme.radius
+                    color: confirmDelete.hovered ? Qt.darker(Theme.danger, 1.1) : Theme.danger
+                    opacity: confirmDelete.enabled ? 1 : 0.55
+                }
+                contentItem: Label {
+                    text: confirmDelete.text
+                    font: confirmDelete.font
+                    color: "#ffffff"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+        }
+    }
+
     ScrollView {
         id: scroller
         anchors.fill: parent
@@ -76,7 +152,7 @@ Item {
                 Layout.rightMargin: 40
                 Layout.fillWidth: true
                 kind: "error"
-                text: teamDialog.opened ? "" : MembersViewModel.errorMessage
+                text: teamDialog.opened || deleteDialog.opened ? "" : MembersViewModel.errorMessage
             }
             Banner {
                 Layout.leftMargin: 40
@@ -152,6 +228,16 @@ Item {
                                 font.pixelSize: 12
                                 enabled: !MembersViewModel.busy
                                 onClicked: teamDialog.openFor(row.modelData)
+                            }
+                            AppButton {
+                                visible: AuthViewModel.isOwner
+                                variant: "ghost"
+                                text: qsTr("Delete")
+                                implicitWidth: 80
+                                implicitHeight: 32
+                                font.pixelSize: 12
+                                enabled: !MembersViewModel.busy
+                                onClicked: deleteDialog.openFor(row.modelData)
                             }
                         }
                     }

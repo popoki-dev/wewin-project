@@ -100,6 +100,26 @@ class MemberService:
         self.db.commit()
         return TeamOut(id=team.id, name=team.name, member_count=self.teams.member_counts([team.id]).get(team.id, 0))
 
+    def delete_team(self, actor: User, team_id: int, client: ClientInfo) -> int:
+        """Delete a team (Owner only). Its members stay, with no team, and its Team Leaders
+        become plain members. Returns how many members were left without a team."""
+        if actor.role != Role.OWNER:
+            raise ServiceError(403, "Only the Owner can delete teams.")
+        team = self.teams.get(team_id)
+        if team is None or team.organization_id != actor.organization_id:
+            raise ServiceError(404, "Team not found.")
+        # Done here rather than left to the foreign key's ON DELETE SET NULL, so the
+        # result is the same on every database and in this session's loaded objects.
+        demoted = self.teams.demote_leaders(team.id)
+        moved = self.teams.unassign_members(team.id)
+        self.audit.record(
+            AuditAction.TEAM_DELETED, client, user_id=actor.id, organization_id=actor.organization_id,
+            team_id=team.id, name=team.name, members_unassigned=moved, leaders_demoted=demoted,
+        )
+        self.teams.delete(team)
+        self.db.commit()
+        return moved
+
     # ---------------------------------------------------------------- bundles
     def _resolve_bundles(self, actor: User, bundle_ids: list[int]) -> list[RoleBundle]:
         ids = list(dict.fromkeys(bundle_ids))
