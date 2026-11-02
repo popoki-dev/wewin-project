@@ -125,5 +125,6 @@ class MemberOut(BaseModel):
     must_change_password: bool
     device_registered: bool
     last_login_at: datetime | None
+    created_at: datetime  # when the account was registered
     role_bundles: list[BundleRef]
     permissions: list[str]

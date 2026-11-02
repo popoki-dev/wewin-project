@@ -94,7 +94,10 @@ Item {
                 Layout.rightMargin: 40
                 Layout.fillWidth: true
                 title: qsTr("People")
-                subtitle: MembersViewModel.members.length === 1 ? qsTr("1 account") : qsTr("%1 accounts").arg(MembersViewModel.members.length)
+                subtitle: MembersViewModel.filterActive
+                          ? qsTr("Showing %1 of %2").arg(MembersViewModel.filteredMembers.length).arg(MembersViewModel.members.length)
+                          : MembersViewModel.members.length === 1 ? qsTr("1 account")
+                          : qsTr("%1 accounts").arg(MembersViewModel.members.length)
                 actions: [
                     AppButton {
                         visible: page.canAdd
@@ -106,8 +109,114 @@ Item {
                     }
                 ]
 
+                // ------------------------------------------------- filters
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        AppTextField {
+                            id: searchField
+                            Layout.fillWidth: true
+                            iconName: "search"
+                            placeholderText: qsTr("Search name or email")
+                            text: MembersViewModel.filterText
+                            field.onTextEdited: MembersViewModel.setFilterText(text)
+                        }
+                        AppComboBox {
+                            id: roleFilter
+                            Layout.preferredWidth: 160
+                            model: [{ value: "", text: qsTr("All roles") },
+                                    { value: "owner", text: qsTr("Owner") },
+                                    { value: "team_leader", text: qsTr("Team Leader") },
+                                    { value: "member", text: qsTr("Member") }]
+                            Component.onCompleted: selectValue(MembersViewModel.filterRole)
+                            onActivated: MembersViewModel.setFilterRole(currentValue)
+                            // Follow the filter however it changes (e.g. Clear filters).
+                            Connections {
+                                target: MembersViewModel
+                                function onFilterChanged() { roleFilter.selectValue(MembersViewModel.filterRole) }
+                            }
+                        }
+                        AppComboBox {
+                            id: teamFilter
+                            Layout.preferredWidth: 180
+                            model: [{ value: -1, text: qsTr("All teams") }, { value: 0, text: qsTr("No team") }]
+                                   .concat(MembersViewModel.teams.map(t => ({ value: t.id, text: t.name })))
+                            Component.onCompleted: selectValue(MembersViewModel.filterTeamId)
+                            onModelChanged: selectValue(MembersViewModel.filterTeamId)
+                            onActivated: MembersViewModel.setFilterTeam(currentValue)
+                            Connections {
+                                target: MembersViewModel
+                                function onFilterChanged() { teamFilter.selectValue(MembersViewModel.filterTeamId) }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Label { text: qsTr("Registered"); color: Theme.textMuted; font.pixelSize: 13 }
+                        AppTextField {
+                            id: fromField
+                            Layout.preferredWidth: 170
+                            Layout.maximumWidth: 170
+                            placeholderText: qsTr("From YYYY-MM-DD")
+                            text: MembersViewModel.filterFrom
+                            field.maximumLength: 10
+                            field.inputMethodHints: Qt.ImhDate
+                            field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
+                            invalid: MembersViewModel.filterErrorFields.indexOf("dateFrom") >= 0
+                            field.onTextEdited: MembersViewModel.setFilterDates(text, toField.text)
+                        }
+                        Label { text: "–"; color: Theme.textMuted }
+                        AppTextField {
+                            id: toField
+                            Layout.preferredWidth: 170
+                            Layout.maximumWidth: 170
+                            placeholderText: qsTr("To YYYY-MM-DD")
+                            text: MembersViewModel.filterTo
+                            field.maximumLength: 10
+                            field.inputMethodHints: Qt.ImhDate
+                            field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
+                            invalid: MembersViewModel.filterErrorFields.indexOf("dateTo") >= 0
+                            field.onTextEdited: MembersViewModel.setFilterDates(fromField.text, text)
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: MembersViewModel.filterError
+                            color: Theme.danger
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                        AppButton {
+                            visible: MembersViewModel.filterActive
+                            variant: "ghost"
+                            iconName: "close"
+                            text: qsTr("Clear filters")
+                            implicitHeight: 36
+                            font.pixelSize: 12
+                            onClicked: MembersViewModel.clearFilters()
+                        }
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+                Label {
+                    visible: MembersViewModel.members.length > 0 && MembersViewModel.filteredMembers.length === 0
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    horizontalAlignment: Text.AlignHCenter
+                    text: qsTr("No one matches these filters.")
+                    color: Theme.textFaint
+                    font.pixelSize: 13
+                }
+
                 Repeater {
-                    model: MembersViewModel.members
+                    model: MembersViewModel.filteredMembers
                     delegate: ColumnLayout {
                         id: row
                         required property var modelData

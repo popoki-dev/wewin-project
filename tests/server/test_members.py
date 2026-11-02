@@ -200,3 +200,12 @@ def test_team_leader_of_a_deleted_team_becomes_a_member(client, owner, leader):
     with SessionLocal() as db:
         details = db.scalars(select(AuditLog.details).where(AuditLog.action == "team.deleted")).one()
     assert details["leaders_demoted"] == ["lead@example.com"]
+
+
+
+def test_members_carry_their_registration_date(owner):
+    team = create_team(owner, "Sales")
+    created = add_member(owner, "new@example.com", team).json()
+    assert created["created_at"].startswith("20")
+    listed = {m["email"]: m for m in owner.get(Paths.MEMBERS).json()}
+    assert listed["new@example.com"]["created_at"] == created["created_at"]

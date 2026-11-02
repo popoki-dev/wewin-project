@@ -455,6 +455,7 @@ class MemberService:
             must_change_password=user.must_change_password,
             device_registered=device_registered,
             last_login_at=user.last_login_at,
+            created_at=user.created_at,
             role_bundles=[BundleRef(id=b.id, name=b.name) for b in user.role_bundles],
             permissions=sorted(p.value for p in user.permissions),
         )

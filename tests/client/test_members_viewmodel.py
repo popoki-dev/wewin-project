@@ -310,3 +310,84 @@ def test_owner_assigns_and_removes_team_leaders(tmp_path, monkeypatch):
     vm.removeTeamLeader(3, SAM)
     calls = [c for c in api.calls if c[0] == "remove_team_leader"]
     assert calls == [("remove_team_leader", 3, 5)] and "now a Member" in vm.notice
+
+
+
+PEOPLE = [
+    {"id": 1, "email": "admin9531@gmail.com", "full_name": "Owner", "role": "owner", "team_id": None,
+     "led_teams": [], "created_at": "2026-01-10T09:00:00Z"},
+    {"id": 2, "email": "lena@b.co", "full_name": "Lena Leader", "role": "team_leader", "team_id": None,
+     "led_teams": [{"id": 7, "name": "Sales"}, {"id": 8, "name": "Support"}], "created_at": "2026-03-05T12:00:00Z"},
+    {"id": 3, "email": "sam@b.co", "full_name": "Sam Member", "role": "member", "team_id": 7,
+     "led_teams": [], "created_at": "2026-06-20T12:00:00Z"},
+    {"id": 4, "email": "uma@b.co", "full_name": "", "role": "member", "team_id": None,
+     "led_teams": [], "created_at": "2026-11-01T12:00:00Z"},
+]
+
+
+def filtered_vm(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["list_members"] = ApiResult(True, 200, {"items": PEOPLE})
+    vm.refresh()
+    return vm
+
+
+def emails(vm):
+    return [m["email"] for m in vm.filteredMembers]
+
+
+def test_no_filter_shows_everyone(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    assert len(vm.filteredMembers) == 4 and not vm.filterActive
+
+
+def test_filter_by_name_or_email(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterText("  LEADER ")
+    assert emails(vm) == ["lena@b.co"] and vm.filterActive
+    vm.setFilterText("uma@")
+    assert emails(vm) == ["uma@b.co"]  # matches email when there is no name
+
+
+def test_filter_by_team_includes_its_leaders(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterTeam(7)
+    assert emails(vm) == ["lena@b.co", "sam@b.co"]
+    vm.setFilterTeam(8)
+    assert emails(vm) == ["lena@b.co"]
+    vm.setFilterTeam(0)  # No team: plain members only, never the Owner
+    assert emails(vm) == ["uma@b.co"]
+
+
+def test_filter_by_role(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterRole("member")
+    assert emails(vm) == ["sam@b.co", "uma@b.co"]
+
+
+def test_filter_by_registration_dates(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterDates("2026-03-01", "2026-06-30")
+    assert emails(vm) == ["lena@b.co", "sam@b.co"]
+    vm.setFilterDates("2026-06-01", "")
+    assert emails(vm) == ["sam@b.co", "uma@b.co"]
+    vm.setFilterDates("2026-0", "")  # still typing: not applied, not an error
+    assert len(vm.filteredMembers) == 4 and vm.filterErrorFields == []
+
+
+def test_invalid_dates_are_flagged_and_ignored(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterDates("2026-13-40", "")
+    assert vm.filterErrorFields == ["dateFrom"] and len(vm.filteredMembers) == 4
+    vm.setFilterDates("2026-07-01", "2026-01-01")
+    assert vm.filterErrorFields == ["dateFrom", "dateTo"] and "after" in vm.filterError
+
+
+def test_filters_combine_and_clear(tmp_path, monkeypatch):
+    vm = filtered_vm(tmp_path, monkeypatch)
+    vm.setFilterTeam(7)
+    vm.setFilterRole("member")
+    vm.setFilterText("sam")
+    assert emails(vm) == ["sam@b.co"]
+    vm.clearFilters()
+    assert len(vm.filteredMembers) == 4 and not vm.filterActive

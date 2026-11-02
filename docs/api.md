@@ -135,6 +135,7 @@ Each member looks like this:
 ```json
 {"id": 5, "email": "…", "full_name": "…", "role": "member", "team_id": 1, "team_name": "Sales",
  "is_active": true, "must_change_password": true, "device_registered": false, "last_login_at": null,
+ "created_at": "2026-11-02T09:30:00Z",
  "role_bundles": [{"id": 2, "name": "Onboarding"}], "permissions": ["members.add", "members.view", "projects.view"]}
 ```
 

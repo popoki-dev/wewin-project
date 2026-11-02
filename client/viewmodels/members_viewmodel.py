@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
@@ -13,6 +14,24 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Team choices from QML: NO_TEAM is an explicit "No team"; UNCHANGED/unset is "not chosen".
 NO_TEAM = 0
 UNCHANGED = -1
+ALL_TEAMS = -1  # team filter: no restriction
+DATE_FORMAT = "YYYY-MM-DD"
+
+
+def _parse_day(text: str) -> date | None:
+    """A complete YYYY-MM-DD date, or None. Raises ValueError for a complete but invalid one."""
+    text = text.strip()
+    if len(text) < len(DATE_FORMAT):
+        return None  # still being typed (or empty): no bound yet
+    return date.fromisoformat(text)
+
+
+def _registered_on(member: dict) -> date | None:
+    """The member's registration day in the local time zone."""
+    raw = member.get("created_at")
+    if not raw:
+        return None
+    return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone().date()
 
 # For QML: [{group, permissions: [{value, label, description}]}]
 _CATALOG = [
@@ -34,6 +53,7 @@ class MembersViewModel(QObject):
     memberRolesSaved = Signal()
     memberSaved = Signal()
     memberDeleted = Signal()
+    filterChanged = Signal()
 
     def __init__(self, auth: AuthViewModel, api: MembersApi, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -46,7 +66,14 @@ class MembersViewModel(QObject):
         self._error = ""
         self._error_fields: list[str] = []
         self._notice = ""
+        # Member list filters. They run on the already loaded (and server-scoped) list.
+        self._filter_text = ""
+        self._filter_team = ALL_TEAMS
+        self._filter_role = ""
+        self._filter_from = ""
+        self._filter_to = ""
         auth.sessionChanged.connect(self._on_session_changed)
+        self.changed.connect(self.filterChanged)
 
     # ------------------------------------------------------------------ props
     @Property("QVariantList", notify=changed)
@@ -56,6 +83,109 @@ class MembersViewModel(QObject):
     @Property("QVariantList", notify=changed)
     def members(self) -> list[dict]:
         return self._members
+
+    # --------------------------------------------------------------- filters
+    @Property(str, notify=filterChanged)
+    def filterText(self) -> str:
+        return self._filter_text
+
+    @Property(int, notify=filterChanged)
+    def filterTeamId(self) -> int:
+        return self._filter_team
+
+    @Property(str, notify=filterChanged)
+    def filterRole(self) -> str:
+        return self._filter_role
+
+    @Property(str, notify=filterChanged)
+    def filterFrom(self) -> str:
+        return self._filter_from
+
+    @Property(str, notify=filterChanged)
+    def filterTo(self) -> str:
+        return self._filter_to
+
+    @Property(bool, notify=filterChanged)
+    def filterActive(self) -> bool:
+        return bool(
+            self._filter_text.strip() or self._filter_team != ALL_TEAMS or self._filter_role
+            or self._filter_from.strip() or self._filter_to.strip()
+        )
+
+    def _date_range(self) -> tuple[date | None, date | None, list[str], str]:
+        """(from, to, invalid fields, message). Invalid bounds are not applied."""
+        start = end = None
+        bad: list[str] = []
+        try:
+            start = _parse_day(self._filter_from)
+        except ValueError:
+            bad.append("dateFrom")
+        try:
+            end = _parse_day(self._filter_to)
+        except ValueError:
+            bad.append("dateTo")
+        if bad:
+            return start, end, bad, f"Enter dates as {DATE_FORMAT}."
+        if start and end and start > end:
+            return None, None, ["dateFrom", "dateTo"], "The start date is after the end date."
+        return start, end, [], ""
+
+    @Property("QStringList", notify=filterChanged)
+    def filterErrorFields(self) -> list[str]:
+        return self._date_range()[2]
+
+    @Property(str, notify=filterChanged)
+    def filterError(self) -> str:
+        return self._date_range()[3]
+
+    @Property("QVariantList", notify=filterChanged)
+    def filteredMembers(self) -> list[dict]:
+        text = self._filter_text.strip().casefold()
+        start, end, _, _ = self._date_range()
+        result = []
+        for m in self._members:
+            if text and text not in (m.get("full_name") or "").casefold() and text not in m.get("email", "").casefold():
+                continue
+            if self._filter_role and m.get("role") != self._filter_role:
+                continue
+            led = [t["id"] for t in m.get("led_teams") or []]
+            if self._filter_team == NO_TEAM:
+                if m.get("role") == "owner" or m.get("team_id") or led:
+                    continue
+            elif self._filter_team != ALL_TEAMS and m.get("team_id") != self._filter_team and self._filter_team not in led:
+                continue
+            if start or end:
+                day = _registered_on(m)
+                if day is None or (start and day < start) or (end and day > end):
+                    continue
+            result.append(m)
+        return result
+
+    @Slot(str)
+    def setFilterText(self, text: str) -> None:
+        self._filter_text = text
+        self.filterChanged.emit()
+
+    @Slot(int)
+    def setFilterTeam(self, team_id: int) -> None:
+        self._filter_team = team_id
+        self.filterChanged.emit()
+
+    @Slot(str)
+    def setFilterRole(self, role: str) -> None:
+        self._filter_role = role
+        self.filterChanged.emit()
+
+    @Slot(str, str)
+    def setFilterDates(self, start: str, end: str) -> None:
+        self._filter_from, self._filter_to = start, end
+        self.filterChanged.emit()
+
+    @Slot()
+    def clearFilters(self) -> None:
+        self._filter_text, self._filter_team, self._filter_role = "", ALL_TEAMS, ""
+        self._filter_from = self._filter_to = ""
+        self.filterChanged.emit()
 
     @Property("QVariantList", notify=changed)
     def bundles(self) -> list[dict]:
