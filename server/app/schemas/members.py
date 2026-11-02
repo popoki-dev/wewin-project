@@ -26,10 +26,25 @@ class TeamCreate(BaseModel):
         return _clean_name(v, "Enter a team name.")
 
 
+class PersonRef(BaseModel):
+    id: int
+    name: str
+
+
+class TeamRef(BaseModel):
+    id: int
+    name: str
+
+
 class TeamOut(BaseModel):
     id: int
     name: str
-    member_count: int = 0
+    member_count: int = 0  # plain members (users.team_id); leaders are listed separately
+    leaders: list[PersonRef] = []
+
+
+class TeamLeaderAdd(BaseModel):
+    user_id: int
 
 
 class RoleBundleIn(BaseModel):
@@ -58,7 +73,9 @@ class BundleRef(BaseModel):
 
 class MemberCreate(_EmailModel):
     full_name: str = Field(default="", max_length=200)
-    team_id: int
+    # Optional for the Owner (plain members may have no team); a Team Leader always adds to
+    # their own team, and Team Leaders being added need a team.
+    team_id: int | None = None
     role: Literal["member", "team_leader"] = "member"
     initial_password: str = Field(min_length=1, max_length=256)
     role_bundle_ids: list[int] = Field(default_factory=list, max_length=50)
@@ -67,9 +84,11 @@ class MemberCreate(_EmailModel):
 class MemberUpdate(BaseModel):
     """Omitted fields are left unchanged.
 
-    Details (name, email, active, new initial password) need `members.edit`; moving a
-    member to another team and the base role are the Owner's; role bundles follow the
-    assignment rules in docs/permissions.md.
+    Details (name, email, active, new initial password) need `members.edit`. `team_id`
+    is applied whenever it is sent, so an explicit null takes the member out of their team;
+    the Owner moves anyone, holders of `members.team` only bring members with no team into
+    their own team or take them out of it. The base role is the Owner's; role bundles
+    follow the assignment rules in docs/permissions.md.
     """
 
     full_name: str | None = Field(default=None, max_length=200)
@@ -87,7 +106,10 @@ class MemberUpdate(BaseModel):
         return None if v is None else normalize_email(v)
 
     def details_given(self) -> bool:
-        return any(v is not None for v in (self.full_name, self.email, self.team_id, self.is_active, self.new_password))
+        return any(v is not None for v in (self.full_name, self.email, self.is_active, self.new_password))
+
+    def team_given(self) -> bool:
+        return "team_id" in self.model_fields_set
 
 
 class MemberOut(BaseModel):
@@ -97,6 +119,8 @@ class MemberOut(BaseModel):
     role: str
     team_id: int | None
     team_name: str | None
+    # Team Leaders only: the teams they lead (they have no team_id).
+    led_teams: list[TeamRef] = []
     is_active: bool
     must_change_password: bool
     device_registered: bool

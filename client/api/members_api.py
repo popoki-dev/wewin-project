@@ -23,6 +23,12 @@ class MembersApi:
     def delete_team(self, server: str, token: str, team_id: int, callback: Callback) -> None:
         self._client.delete(server, Paths.team(team_id), callback, token)
 
+    def add_team_leader(self, server: str, token: str, team_id: int, user_id: int, callback: Callback) -> None:
+        self._client.post(server, Paths.team_leaders(team_id), {"user_id": user_id}, callback, token)
+
+    def remove_team_leader(self, server: str, token: str, team_id: int, user_id: int, callback: Callback) -> None:
+        self._client.delete(server, Paths.team_leader(team_id, user_id), callback, token)
+
     def list_members(self, server: str, token: str, callback: Callback) -> None:
         self._client.get(server, Paths.MEMBERS, callback, token)
 

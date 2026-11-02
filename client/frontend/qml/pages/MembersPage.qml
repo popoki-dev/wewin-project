@@ -58,7 +58,7 @@ Item {
                     Layout.fillWidth: true
                     Label { text: qsTr("Members"); color: Theme.text; font.pixelSize: 28; font.weight: Font.Bold; Layout.fillWidth: true }
                     Label {
-                        text: page.owner ? qsTr("Everyone in your organization.") : qsTr("Members of your team.")
+                        text: page.owner ? qsTr("Everyone in your organization.") : AuthViewModel.scopeTeamIds.length > 1 ? qsTr("Members of the teams you lead.") : qsTr("Members of your team.")
                         color: Theme.textMuted
                         font.pixelSize: 14
                     }
@@ -152,11 +152,55 @@ Item {
                                     elide: Text.ElideRight; Layout.fillWidth: true
                                 }
                             }
-                            Label {
+                            // Team, plus a Team Leader's quick moves in and out of their team.
+                            ColumnLayout {
                                 visible: page.wide
                                 Layout.preferredWidth: 140
-                                text: row.modelData.team_name || "—"
-                                color: Theme.textMuted; font.pixelSize: 13; elide: Text.ElideRight
+                                Layout.maximumWidth: 140
+                                spacing: 0
+                                Label {
+                                    readonly property var led: row.modelData.led_teams || []
+                                    Layout.fillWidth: true
+                                    text: led.length > 0 ? qsTr("Leads %1").arg(led.map(t => t.name).join(", "))
+                                        : row.modelData.team_name || (row.modelData.role === "owner" ? "—" : qsTr("No team"))
+                                    color: row.modelData.team_name || led.length > 0 ? Theme.textMuted : Theme.textFaint
+                                    font.pixelSize: 13; elide: Text.ElideRight
+                                    ToolTip.visible: leadHover.hovered && led.length > 1
+                                    ToolTip.text: text
+                                    HoverHandler { id: leadHover }
+                                }
+                                LinkButton {
+                                    id: bringIn
+                                    visible: MembersViewModel.canBringIntoTeam(row.modelData)
+                                    text: MembersViewModel.scopeTeams.length > 1 ? qsTr("Add to a team ▾") : qsTr("Add to my team")
+                                    font.pixelSize: 12
+                                    enabled: !MembersViewModel.busy
+                                    onClicked: {
+                                        const scope = MembersViewModel.scopeTeams
+                                        if (scope.length === 1) MembersViewModel.setMemberTeam(row.modelData, scope[0].id)
+                                        else teamMenu.popup(bringIn, 0, bringIn.height)
+                                    }
+                                    Menu {
+                                        id: teamMenu
+                                        Instantiator {
+                                            model: MembersViewModel.scopeTeams
+                                            delegate: MenuItem {
+                                                required property var modelData
+                                                text: modelData.name
+                                                onTriggered: MembersViewModel.setMemberTeam(row.modelData, modelData.id)
+                                            }
+                                            onObjectAdded: (index, object) => teamMenu.insertItem(index, object)
+                                            onObjectRemoved: (index, object) => teamMenu.removeItem(object)
+                                        }
+                                    }
+                                }
+                                LinkButton {
+                                    visible: MembersViewModel.canTakeOutOfTeam(row.modelData)
+                                    text: qsTr("Remove from team")
+                                    font.pixelSize: 12
+                                    enabled: !MembersViewModel.busy
+                                    onClicked: MembersViewModel.setMemberTeam(row.modelData, 0)
+                                }
                             }
                             Item {
                                 // Fixed-width column, so the team column lines up across rows.

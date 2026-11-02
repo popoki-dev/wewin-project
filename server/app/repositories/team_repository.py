@@ -3,9 +3,7 @@ from __future__ import annotations
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from shared.enums import Role
-
-from ..models import Team, User
+from ..models import Team, User, team_leaders
 
 
 class TeamRepository:
@@ -36,13 +34,20 @@ class TeamRepository:
         self.db.flush()
         return team
 
-    def demote_leaders(self, team_id: int) -> list[str]:
-        """Make the team's Team Leaders plain members; returns their emails."""
-        leaders = list(self.db.scalars(select(User).where(User.team_id == team_id, User.role == Role.TEAM_LEADER)))
-        for user in leaders:
-            user.role = Role.MEMBER
-        self.db.flush()
-        return [u.email for u in leaders]
+    def leaders_of(self, team_ids: list[int]) -> dict[int, list[User]]:
+        """Team Leaders of each team, by team id."""
+        if not team_ids:
+            return {}
+        rows = self.db.execute(
+            select(team_leaders.c.team_id, User)
+            .join(User, User.id == team_leaders.c.user_id)
+            .where(team_leaders.c.team_id.in_(team_ids))
+            .order_by(User.full_name, User.email)
+        ).all()
+        result: dict[int, list[User]] = {}
+        for team_id, user in rows:
+            result.setdefault(team_id, []).append(user)
+        return result
 
     def unassign_members(self, team_id: int) -> int:
         """Set team_id to NULL for everyone in the team; returns how many were moved."""

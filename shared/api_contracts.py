@@ -30,6 +30,14 @@ class Paths:
         return f"{API_PREFIX}/teams/{team_id}"
 
     @staticmethod
+    def team_leaders(team_id: int) -> str:
+        return f"{API_PREFIX}/teams/{team_id}/leaders"
+
+    @staticmethod
+    def team_leader(team_id: int, user_id: int) -> str:
+        return f"{API_PREFIX}/teams/{team_id}/leaders/{user_id}"
+
+    @staticmethod
     def member(user_id: int) -> str:
         return f"{API_PREFIX}/members/{user_id}"
 

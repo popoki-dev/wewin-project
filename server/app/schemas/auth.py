@@ -66,6 +66,8 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     team_id: int | None = None
+    # Team Leaders: the teams they lead.
+    led_team_ids: list[int] = []
     must_change_password: bool = False
     # Effective permissions (role plus role bundles), for showing the right UI.
     permissions: list[str] = []

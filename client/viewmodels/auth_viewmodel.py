@@ -170,6 +170,13 @@ class AuthViewModel(QObject):
     def userTeamId(self) -> int:
         return self._user.get("team_id") or 0
 
+    @Property("QVariantList", notify=sessionChanged)
+    def scopeTeamIds(self) -> list[int]:
+        """The teams this user acts on: those a Team Leader leads, or a member's own team."""
+        if self._user.get("role") == "team_leader":
+            return list(self._user.get("led_team_ids", []))
+        return [self._user["team_id"]] if self._user.get("team_id") else []
+
     @Property(bool, notify=resetStateChanged)
     def resetBusy(self) -> bool:
         return self._reset_busy

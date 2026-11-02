@@ -10,6 +10,9 @@ from client.viewmodels.auth_viewmodel import AuthViewModel
 from shared.permissions import CATALOG
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Team choices from QML: NO_TEAM is an explicit "No team"; UNCHANGED/unset is "not chosen".
+NO_TEAM = 0
+UNCHANGED = -1
 
 # For QML: [{group, permissions: [{value, label, description}]}]
 _CATALOG = [
@@ -79,21 +82,22 @@ class MembersViewModel(QObject):
             return False
         if self._auth.isOwner:
             return True
-        return (
-            self._auth.has("members.assign_roles")
-            and member.get("role") == "member"
-            and member.get("team_id") == self._auth.userTeamId
-            and member.get("email") != self._auth.userEmail
-        )
+        return self._in_my_scope(member, "members.assign_roles")
 
     def _in_my_scope(self, member: dict, permission: str) -> bool:
-        """Non-owners act only on plain members of their own team, never themselves."""
+        """Non-owners act only on plain members of their teams, never themselves."""
         return (
             self._auth.has(permission)
             and member.get("role") == "member"
-            and member.get("team_id") == self._auth.userTeamId
+            and member.get("team_id") in self._auth.scopeTeamIds
             and member.get("email") != self._auth.userEmail
         )
+
+    @Property("QVariantList", notify=changed)
+    def scopeTeams(self) -> list[dict]:
+        """The teams this user acts on, as {id, name}."""
+        scope = set(self._auth.scopeTeamIds)
+        return [t for t in self._teams if t["id"] in scope]
 
     @Slot("QVariant", result=bool)
     def canEditMember(self, member: dict) -> bool:
@@ -106,6 +110,21 @@ class MembersViewModel(QObject):
         return self._auth.isOwner or self._in_my_scope(member, "members.delete")
 
     @Slot("QVariant", result=bool)
+    def canBringIntoTeam(self, member: dict) -> bool:
+        """Non-owners with members.team: a plain member with no team can join one of their teams."""
+        return (
+            not self._auth.isOwner
+            and self._auth.has("members.team")
+            and bool(self._auth.scopeTeamIds)
+            and member.get("role") == "member"
+            and not member.get("team_id")
+        )
+
+    @Slot("QVariant", result=bool)
+    def canTakeOutOfTeam(self, member: dict) -> bool:
+        return not self._auth.isOwner and self._in_my_scope(member, "members.team")
+
+    @Slot("QVariant", result=bool)
     def canResetDevice(self, member: dict) -> bool:
         # Resetting your own device would sign you out; the Owner uses `manage reset-device` instead.
         if not member.get("device_registered") or member.get("email") == self._auth.userEmail:
@@ -115,7 +134,7 @@ class MembersViewModel(QObject):
         return (
             self._auth.has("members.reset_device")
             and member.get("role") == "member"
-            and member.get("team_id") == self._auth.userTeamId
+            and member.get("team_id") in self._auth.scopeTeamIds
         )
 
     @Property(bool, notify=stateChanged)
@@ -156,6 +175,8 @@ class MembersViewModel(QObject):
                 on_ok(result.data)
             else:
                 fields = (fields_by_status or {}).get(result.status, [])
+                if "team" in result.error.lower() and result.status in (403, 404, 422):
+                    fields = ["team"]  # e.g. "A Team Leader must belong to a team."
                 self._set_state(False, result.error, fields)
 
         method(self._auth.serverUrl, self._auth.access_token(), *args, done)
@@ -249,11 +270,21 @@ class MembersViewModel(QObject):
         self, email: str, full_name: str, team_id: int, role: str, initial_password: str, bundle_ids: list
     ) -> None:
         email = email.strip().lower()
+        owner = self._auth.isOwner
+        if not owner:
+            role = "member"
+            scope = self._auth.scopeTeamIds
+            if team_id <= 0 and len(scope) == 1:
+                team_id = scope[0]  # their only team
         problem, fields = "", []
         if not _EMAIL_RE.match(email):
             problem, fields = "Enter the member's email address.", ["email"]
-        elif team_id <= 0:
-            problem, fields = "Select a team.", ["team"]
+        elif team_id == UNCHANGED or (team_id == NO_TEAM and not owner):
+            problem, fields = ("Select a team, or No team." if owner else "Select a team."), ["team"]
+        elif not owner and team_id not in self._auth.scopeTeamIds:
+            problem, fields = "Select one of your teams.", ["team"]
+        elif team_id == NO_TEAM and role == "team_leader":
+            problem, fields = "A Team Leader must belong to a team.", ["team"]
         elif not initial_password:
             problem, fields = "Set an initial password for the member.", ["password"]
         if problem:
@@ -263,8 +294,8 @@ class MembersViewModel(QObject):
         body = {
             "email": email,
             "full_name": full_name.strip(),
-            "team_id": team_id,
-            "role": role if self._auth.isOwner else "member",
+            "team_id": team_id if team_id > 0 else None,
+            "role": role,
             "initial_password": initial_password,
             "role_bundle_ids": [int(i) for i in bundle_ids],
         }
@@ -300,7 +331,8 @@ class MembersViewModel(QObject):
     def saveMember(
         self, member: dict, full_name: str, email: str, team_id: int, is_active: bool, new_password: str
     ) -> None:
-        """Send only what changed. `team_id` 0 and an empty `new_password` mean "leave as is"."""
+        """Send only what changed. `team_id`: UNCHANGED (-1) leaves it, NO_TEAM (0) clears it
+        (Owner only here); an empty `new_password` leaves the password."""
         email = email.strip().lower()
         if not _EMAIL_RE.match(email):
             self._set_state(False, "Enter a valid email address.", ["email"])
@@ -310,8 +342,8 @@ class MembersViewModel(QObject):
             body["full_name"] = full_name.strip()
         if email != member.get("email"):
             body["email"] = email
-        if team_id > 0 and team_id != member.get("team_id") and self._auth.isOwner:
-            body["team_id"] = team_id
+        if team_id != UNCHANGED and self._auth.isOwner and team_id != (member.get("team_id") or NO_TEAM):
+            body["team_id"] = team_id if team_id > 0 else None
         if is_active != member.get("is_active", True):
             body["is_active"] = is_active
         if new_password:
@@ -334,6 +366,47 @@ class MembersViewModel(QObject):
             self._api.update_member, member["id"], body, on_ok=saved,
             fields_by_status={409: ["email"], 404: ["team"], 422: ["password"]},
         )
+
+    @Slot("QVariant", int)
+    def setMemberTeam(self, member: dict, team_id: int) -> None:
+        """Move a member into a team, or out of theirs with NO_TEAM."""
+        target = team_id if team_id > 0 else None
+        name = member.get("full_name") or member["email"]
+
+        def moved(updated: dict) -> None:
+            if updated.get("team_name"):
+                notice = f"{name} joined {updated['team_name']}."
+            else:
+                notice = f"{name} was taken out of the team. Their account is kept."
+            self._set_state(False, notice=notice)
+            self.refresh()
+
+        self._call(self._api.update_member, member["id"], {"team_id": target}, on_ok=moved)
+
+    @Slot(int, "QVariant")
+    def addTeamLeader(self, team_id: int, member: dict) -> None:
+        """Owner: make someone a leader of this team (a member is promoted to Team Leader)."""
+        name = member.get("full_name") or member["email"]
+
+        def added(_: dict) -> None:
+            team = next((t["name"] for t in self._teams if t["id"] == team_id), "the team")
+            self._set_state(False, notice=f"{name} now leads {team}.")
+            self.refresh()
+
+        self._call(self._api.add_team_leader, team_id, member["id"], on_ok=added)
+
+    @Slot(int, "QVariant")
+    def removeTeamLeader(self, team_id: int, member: dict) -> None:
+        """Owner: stop someone leading this team; leading no team any more makes them a member."""
+        name = member.get("full_name") or member.get("email") or member.get("name", "")
+
+        def removed(updated: dict) -> None:
+            team = next((t["name"] for t in self._teams if t["id"] == team_id), "the team")
+            suffix = " They lead no team any more, so they are now a Member." if updated["role"] == "member" else ""
+            self._set_state(False, notice=f"{name} no longer leads {team}.{suffix}")
+            self.refresh()
+
+        self._call(self._api.remove_team_leader, team_id, member["id"], on_ok=removed)
 
     @Slot("QVariant")
     def deleteMember(self, member: dict) -> None:

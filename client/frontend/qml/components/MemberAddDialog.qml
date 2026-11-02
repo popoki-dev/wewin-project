@@ -18,10 +18,11 @@ AppDialog {
         passwordField.text = ""
         bundles = []
         roleBox.currentIndex = 0
-        teamBox.model = MembersViewModel.teams.map(t => ({ value: t.id, text: t.name }))
-        // A Team Leader can only add to their own team; with one team, there is nothing to pick.
-        teamBox.selectValue(!AuthViewModel.isOwner ? AuthViewModel.userTeamId
-                            : MembersViewModel.teams.length === 1 ? MembersViewModel.teams[0].id : -1)
+        // The Owner may add someone with no team (value 0); anyone else adds to one of their teams.
+        const teams = (AuthViewModel.isOwner ? MembersViewModel.teams : MembersViewModel.scopeTeams)
+            .map(t => ({ value: t.id, text: t.name }))
+        teamBox.model = AuthViewModel.isOwner ? [{ value: 0, text: qsTr("No team") }].concat(teams) : teams
+        teamBox.selectValue(AuthViewModel.isOwner ? 0 : teams.length === 1 ? teams[0].value : -1)
         MembersViewModel.clearMessages()
         open()
     }
@@ -33,14 +34,14 @@ AppDialog {
     function submit() {
         MembersViewModel.addMember(
             emailField.text, nameField.text,
-            teamBox.currentValue !== undefined ? teamBox.currentValue : 0,
+            teamBox.currentValue !== undefined ? teamBox.currentValue : -1,
             AuthViewModel.isOwner ? roleBox.currentValue : "member",
             passwordField.text, bundles)
     }
 
     title: qsTr("Add member")
     subtitle: AuthViewModel.isOwner ? qsTr("They sign in with the initial password and must change it.")
-                                    : qsTr("Members you add join your team and must change the initial password.")
+                                    : qsTr("Members you add join one of your teams and must change the initial password.")
     iconName: "plus"
 
     onOpened: emailField.forceFocus()
@@ -50,15 +51,6 @@ AppDialog {
     Connections {
         target: MembersViewModel
         function onMemberAdded() { if (dialog.opened) dialog.close() }
-    }
-
-    Label {
-        visible: AuthViewModel.isOwner && MembersViewModel.teams.length === 0
-        Layout.fillWidth: true
-        wrapMode: Text.Wrap
-        text: qsTr("There are no teams yet. Create one on the Teams tab first.")
-        color: Theme.warning
-        font.pixelSize: 13
     }
 
     AppTextField {
@@ -86,7 +78,7 @@ AppDialog {
             id: teamBox
             Layout.fillWidth: true
             label: qsTr("Team")
-            box.enabled: AuthViewModel.isOwner
+            box.enabled: AuthViewModel.isOwner || MembersViewModel.scopeTeams.length > 1
             invalid: MembersViewModel.errorFields.indexOf("team") >= 0
             onActivated: MembersViewModel.fieldEdited("team")
         }

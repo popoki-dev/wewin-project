@@ -14,21 +14,22 @@ Item {
     readonly property bool orgWide: AuthViewModel.isOwner || canCreateTeams || canRenameTeams
 
     function membersText(n) { return n === 1 ? qsTr("1 member") : qsTr("%1 members").arg(n) }
-    // Team Leaders of a team, from the member list (empty when the user cannot list members).
-    function leadersOf(teamId) {
+    // Leaders who lead only this team, so deleting it makes them Members.
+    function soleLeadersOf(teamId) {
         return MembersViewModel.members
-            .filter(m => m.team_id === teamId && m.role === "team_leader")
+            .filter(m => (m.led_teams || []).length === 1 && m.led_teams[0].id === teamId)
             .map(m => m.full_name || m.email)
     }
 
     TeamDialog { id: teamDialog; objectName: "teamDialog" }
+    TeamMembersDialog { id: manageDialog; objectName: "teamMembersDialog" }
 
     // Owner only. The team's members are kept, with no team; its Team Leaders become members.
     AppDialog {
         id: deleteDialog
         objectName: "teamDeleteDialog"
         property var team: ({})
-        readonly property var leaders: team.id ? page.leadersOf(team.id) : []
+        readonly property var leaders: team.id ? page.soleLeadersOf(team.id) : []
         function openFor(t) {
             team = t
             MembersViewModel.clearMessages()
@@ -60,7 +61,7 @@ Item {
             wrapMode: Text.Wrap
             color: Theme.warning
             font.pixelSize: 13
-            text: qsTr("%1 will become a regular member and lose Team Leader permissions.")
+            text: qsTr("%1 leads no other team, so will become a regular member and lose Team Leader permissions.")
                   .arg(deleteDialog.leaders.join(", "))
         }
         Banner { Layout.fillWidth: true; kind: "error"; text: deleteDialog.opened ? MembersViewModel.errorMessage : "" }
@@ -125,6 +126,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         text: page.orgWide ? qsTr("Every team in your organization. Each member belongs to one team.")
+                                           : AuthViewModel.userRole === "team_leader" ? qsTr("The teams you lead.")
                                            : qsTr("The team you belong to.")
                         color: Theme.textMuted
                         font.pixelSize: 14
@@ -152,7 +154,7 @@ Item {
                 Layout.rightMargin: 40
                 Layout.fillWidth: true
                 kind: "error"
-                text: teamDialog.opened || deleteDialog.opened ? "" : MembersViewModel.errorMessage
+                text: teamDialog.opened || deleteDialog.opened || manageDialog.opened ? "" : MembersViewModel.errorMessage
             }
             Banner {
                 Layout.leftMargin: 40
@@ -166,7 +168,7 @@ Item {
                 Layout.leftMargin: 40
                 Layout.rightMargin: 40
                 Layout.fillWidth: true
-                title: page.orgWide ? qsTr("All teams") : qsTr("Your team")
+                title: page.orgWide ? qsTr("All teams") : MembersViewModel.teams.length > 1 ? qsTr("Your teams") : qsTr("Your team")
                 subtitle: MembersViewModel.teams.length === 1 ? qsTr("1 team") : qsTr("%1 teams").arg(MembersViewModel.teams.length)
 
                 Label {
@@ -185,7 +187,7 @@ Item {
                         id: row
                         required property var modelData
                         required property int index
-                        readonly property var leaders: page.leadersOf(modelData.id)
+                        readonly property var leaders: (modelData.leaders || []).map(p => p.name)
                         Layout.fillWidth: true
                         spacing: 10
 
@@ -218,6 +220,16 @@ Item {
                                 text: page.membersText(row.modelData.member_count)
                                 color: Theme.textMuted
                                 font.pixelSize: 12
+                            }
+                            AppButton {
+                                visible: AuthViewModel.isOwner
+                                variant: "secondary"
+                                text: qsTr("Manage")
+                                implicitWidth: 86
+                                implicitHeight: 32
+                                font.pixelSize: 12
+                                enabled: !MembersViewModel.busy
+                                onClicked: manageDialog.openFor(row.modelData)
                             }
                             AppButton {
                                 visible: page.canRenameTeams

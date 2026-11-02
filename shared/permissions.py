@@ -17,6 +17,7 @@ class Permission(str, enum.Enum):
     MEMBERS_ADD = "members.add"
     MEMBERS_EDIT = "members.edit"
     MEMBERS_DELETE = "members.delete"
+    MEMBERS_TEAM = "members.team"
     MEMBERS_RESET_DEVICE = "members.reset_device"
     MEMBERS_ASSIGN_ROLES = "members.assign_roles"
     TEAMS_CREATE = "teams.create"
@@ -37,6 +38,8 @@ CATALOG: list[tuple[str, list[tuple[Permission, str, str]]]] = [
         (Permission.MEMBERS_EDIT, "Edit members",
          "Change team members' name, email and active status, or set a new initial password."),
         (Permission.MEMBERS_DELETE, "Delete members", "Delete team members' accounts."),
+        (Permission.MEMBERS_TEAM, "Move members in/out of team",
+         "Bring members who have no team into their team, or take members out of it."),
         (Permission.MEMBERS_RESET_DEVICE, "Reset devices", "Release a team member's computer binding."),
         (Permission.MEMBERS_ASSIGN_ROLES, "Assign role bundles",
          "Give or take role bundles from team members, limited to permissions they hold."),
@@ -63,6 +66,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.MEMBERS_ADD,
         Permission.MEMBERS_EDIT,
         Permission.MEMBERS_DELETE,
+        Permission.MEMBERS_TEAM,
         Permission.MEMBERS_RESET_DEVICE,
         Permission.MEMBERS_ASSIGN_ROLES,
         Permission.PROJECTS_VIEW,
@@ -79,6 +83,7 @@ _IMPLIED = {
     Permission.MEMBERS_ADD: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_EDIT: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_DELETE: Permission.MEMBERS_VIEW,
+    Permission.MEMBERS_TEAM: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_RESET_DEVICE: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_ASSIGN_ROLES: Permission.MEMBERS_VIEW,
 }

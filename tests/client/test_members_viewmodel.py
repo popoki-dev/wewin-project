@@ -36,21 +36,26 @@ class FakeMembersApi:
     def delete_bundle(self, server, token, bundle_id, cb): self._answer("delete_bundle", cb, bundle_id)
     def delete_member(self, server, token, user_id, cb): self._answer("delete_member", cb, user_id)
     def delete_team(self, server, token, team_id, cb): self._answer("delete_team", cb, team_id)
+    def add_team_leader(self, server, token, team_id, user_id, cb): self._answer("add_team_leader", cb, team_id, user_id)
+    def remove_team_leader(self, server, token, team_id, user_id, cb):
+        self._answer("remove_team_leader", cb, team_id, user_id)
 
 
 ROLE_PERMISSIONS = {
     "owner": ["members.add", "members.assign_roles", "members.reset_device", "members.view", "teams.create"],
     "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.reset_device",
-                    "members.view", "revenue.view"],
+                    "members.team", "members.view", "revenue.view"],
     "member": ["projects.view"],
 }
 
 
-def signed_in(tmp_path, monkeypatch, role):
+def signed_in(tmp_path, monkeypatch, role, led_team_ids=(7,)):
     monkeypatch.setattr(storage_module, "keyring", None)
     storage = Storage(QSettings(str(tmp_path / "wewin.ini"), QSettings.Format.IniFormat))
     auth_api = FakeAuthApi()
-    auth_api.results["login"] = ApiResult(True, 200, {**TOKENS, "user": {**TOKENS["user"], "role": role, "team_id": 7,
+    auth_api.results["login"] = ApiResult(True, 200, {**TOKENS, "user": {**TOKENS["user"], "role": role,
+                                                                         "team_id": None if role == "team_leader" else 7,
+                                                                         "led_team_ids": list(led_team_ids) if role == "team_leader" else [],
                                                                          "permissions": ROLE_PERMISSIONS[role]}})
     auth = AuthViewModel(storage, auth_api, device_id=lambda: DEVICE_ID)
     auth.login("localhost:8000", "admin9531@gmail.com", "pw", False)
@@ -64,8 +69,10 @@ def test_add_member_validates_email_team_and_password(tmp_path, monkeypatch):
     assert vm.errorFields == ["email"]
     vm.fieldEdited("email")
     assert vm.errorMessage == ""
-    vm.addMember("a@b.co", "", 0, "member", "Pass-word-1", [])
+    vm.addMember("a@b.co", "", -1, "member", "Pass-word-1", [])
     assert vm.errorFields == ["team"]
+    vm.addMember("a@b.co", "", 0, "team_leader", "Pass-word-1", [])
+    assert vm.errorFields == ["team"] and "Team Leader" in vm.errorMessage
     vm.addMember("a@b.co", "", 1, "member", "", [])
     assert vm.errorFields == ["password"]
     assert api.calls == []
@@ -170,6 +177,9 @@ def test_save_member_sends_only_changes(tmp_path, monkeypatch):
     api.results["update_member"] = ApiResult(True, 200, {**SAM, "full_name": "Samuel"})
     vm.saveMember(SAM, "Samuel ", " Sam@B.co ", 7, True, "")
     assert api.calls[0] == ("update_member", 5, {"full_name": "Samuel"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", 0, True, "")
+    updates = [c for c in api.calls if c[0] == "update_member"]
+    assert updates[-1] == ("update_member", 5, {"team_id": None})
     vm.saveMember(SAM, "Sam", "sam@b.co", 9, False, "Fresh-pass-3")
     updates = [c for c in api.calls if c[0] == "update_member"]
     assert updates[-1] == ("update_member", 5, {"team_id": 9, "is_active": False, "new_password": "Fresh-pass-3"})
@@ -227,3 +237,76 @@ def test_delete_team(tmp_path, monkeypatch):
     vm.deleteTeam({"id": 3, "name": "Sales"})
     assert api.calls[0] == ("delete_team", 3) and deleted == ["Sales"]
     assert vm.notice == "Team “Sales” deleted. 2 members now have no team."
+
+
+
+def test_owner_adds_a_member_without_a_team(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["add_member"] = ApiResult(True, 201, {"email": "a@b.co"})
+    vm.addMember("a@b.co", "", 0, "member", "Pass-word-1", [])
+    assert api.calls[0][1]["team_id"] is None
+
+
+def test_team_leader_always_adds_to_own_team(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader")
+    api.results["add_member"] = ApiResult(True, 201, {"email": "a@b.co"})
+    vm.addMember("a@b.co", "", 0, "member", "Pass-word-1", [])
+    assert api.calls[0][1]["team_id"] == 7
+
+
+def test_team_moves_for_a_team_leader(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader")
+    loner = {"id": 9, "email": "l@b.co", "role": "member", "team_id": None}
+    assert vm.canBringIntoTeam(loner) and not vm.canTakeOutOfTeam(loner)
+    assert vm.canTakeOutOfTeam(SAM) and not vm.canBringIntoTeam(SAM)
+    assert not vm.canTakeOutOfTeam({**SAM, "team_id": 99})
+
+    api.results["update_member"] = ApiResult(True, 200, {**loner, "team_id": 7, "team_name": "Sales"})
+    vm.setMemberTeam(loner, 7)
+    assert api.calls[0] == ("update_member", 9, {"team_id": 7}) and "joined Sales" in vm.notice
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "team_id": None, "team_name": None})
+    vm.setMemberTeam(SAM, 0)
+    updates = [c for c in api.calls if c[0] == "update_member"]
+    assert updates[-1] == ("update_member", 5, {"team_id": None}) and "taken out" in vm.notice
+
+
+def test_owner_uses_edit_for_team_moves(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch, "owner")
+    assert not vm.canBringIntoTeam({"role": "member", "team_id": None})
+    assert not vm.canTakeOutOfTeam(SAM)
+
+
+def test_leader_needs_team_error_points_at_team(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["update_member"] = ApiResult(False, 422, {}, "A Team Leader must belong to a team.")
+    vm.saveMember({**SAM, "role": "team_leader"}, "Sam", "sam@b.co", 0, True, "")
+    assert vm.errorFields == ["team"]
+
+
+
+def test_team_leader_of_several_teams_must_pick_one(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader", led_team_ids=(7, 8))
+    vm.addMember("a@b.co", "", 0, "member", "Pass-word-1", [])
+    assert vm.errorFields == ["team"] and api.calls == []
+    vm.addMember("a@b.co", "", 9, "member", "Pass-word-1", [])
+    assert vm.errorMessage == "Select one of your teams."
+    api.results["add_member"] = ApiResult(True, 201, {"email": "a@b.co"})
+    vm.addMember("a@b.co", "", 8, "member", "Pass-word-1", [])
+    assert api.calls[0][1]["team_id"] == 8
+
+
+def test_scope_covers_every_led_team(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch, "team_leader", led_team_ids=(7, 8))
+    assert vm.canEditMember({**SAM, "team_id": 8}) and vm.canTakeOutOfTeam({**SAM, "team_id": 8})
+    assert not vm.canEditMember({**SAM, "team_id": 9})
+
+
+def test_owner_assigns_and_removes_team_leaders(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["add_team_leader"] = ApiResult(True, 200, {**SAM, "role": "team_leader"})
+    vm.addTeamLeader(3, SAM)
+    assert api.calls[0] == ("add_team_leader", 3, 5) and "now leads" in vm.notice
+    api.results["remove_team_leader"] = ApiResult(True, 200, {**SAM, "role": "member"})
+    vm.removeTeamLeader(3, SAM)
+    calls = [c for c in api.calls if c[0] == "remove_team_leader"]
+    assert calls == [("remove_team_leader", 3, 5)] and "now a Member" in vm.notice
