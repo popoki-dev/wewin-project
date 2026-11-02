@@ -35,6 +35,7 @@ class FakeMembersApi:
     def update_bundle(self, server, token, bundle_id, body, cb): self._answer("update_bundle", cb, bundle_id, body)
     def delete_bundle(self, server, token, bundle_id, cb): self._answer("delete_bundle", cb, bundle_id)
     def delete_member(self, server, token, user_id, cb): self._answer("delete_member", cb, user_id)
+    def delete_team(self, server, token, team_id, cb): self._answer("delete_team", cb, team_id)
 
 
 ROLE_PERMISSIONS = {
@@ -216,3 +217,13 @@ def test_delete_member(tmp_path, monkeypatch):
     api.results["delete_member"] = ApiResult(True, 200, {"message": "Member deleted."})
     vm.deleteMember(SAM)
     assert api.calls[0] == ("delete_member", 5) and "sam@b.co" in vm.notice
+
+
+def test_delete_team(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    deleted = []
+    vm.teamDeleted.connect(deleted.append)
+    api.results["delete_team"] = ApiResult(True, 200, {"message": "Team deleted. 2 members now have no team."})
+    vm.deleteTeam({"id": 3, "name": "Sales"})
+    assert api.calls[0] == ("delete_team", 3) and deleted == ["Sales"]
+    assert vm.notice == "Team “Sales” deleted. 2 members now have no team."

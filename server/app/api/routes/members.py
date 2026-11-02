@@ -65,6 +65,18 @@ def rename_team(
     return members.rename_team(user, team_id, body.name, client)
 
 
+@router.delete("/teams/{team_id}", response_model=MessageResponse)
+def delete_team(
+    team_id: int,
+    user: User = Depends(require_role(Role.OWNER)),
+    client: ClientInfo = Depends(get_client_info),
+    members: MemberService = Depends(get_member_service),
+) -> MessageResponse:
+    moved = members.delete_team(user, team_id, client)
+    who = "1 member now has" if moved == 1 else f"{moved} members now have"
+    return MessageResponse(message=f"Team deleted. {who} no team." if moved else "Team deleted.")
+
+
 # -------------------------------------------------------------------- members
 @router.get("/members", response_model=list[MemberOut])
 def list_members(
