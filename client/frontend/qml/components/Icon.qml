@@ -35,7 +35,8 @@ Item {
         "chevron": "M6 9l6 6 6-6",
         "plus":    "M12 5v14 M5 12h14",
         "refresh": "M20 12a8 8 0 1 1-2.3-5.7 M20 4v4h-4",
-        "home":    "M3 11l9-7 9 7 M5 10v10h14V10"
+        "home":    "M3 11l9-7 9 7 M5 10v10h14V10",
+        "grid":    "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z"
     })
 
     Shape {

@@ -38,6 +38,7 @@ Rectangle {
                     model: [
                         { page: "home",     icon: "home",   text: qsTr("Overview"), ready: true },
                         { page: "members",  icon: "users",  text: qsTr("Members"),  ready: AuthViewModel.canManageMembers },
+                        { page: "teams",    icon: "grid",   text: qsTr("Teams"),    ready: AuthViewModel.canViewTeams },
                         { page: "roles",    icon: "key",    text: qsTr("Roles"),    ready: AuthViewModel.isOwner },
                         { page: "projects", icon: "folder", text: qsTr("Projects"), ready: false },
                         { page: "revenue",  icon: "chart",  text: qsTr("Revenue"),  ready: false }
@@ -46,8 +47,9 @@ Rectangle {
                         id: navItem
                         required property var modelData
                         readonly property bool current: root.currentPage === modelData.page
-                        // Members needs members.view; Roles is the Owner's.
+                        // Members needs members.view; Teams, members.view or teams.*; Roles is the Owner's.
                         visible: modelData.page === "members" ? AuthViewModel.canManageMembers
+                               : modelData.page === "teams" ? AuthViewModel.canViewTeams
                                : modelData.page === "roles" ? AuthViewModel.isOwner : true
                         Layout.fillWidth: true
                         implicitHeight: 40
