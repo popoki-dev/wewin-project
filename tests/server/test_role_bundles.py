@@ -148,14 +148,16 @@ def test_team_leader_cannot_change_roles_outside_own_team(client, owner, leader,
     assert patch(owner, Paths.member(owner_id), {"role_bundle_ids": [bundle]}).status_code == 403
 
 
-def test_only_the_owner_changes_base_roles(client, owner, leader, team):
+def test_leaders_promote_but_only_the_owner_demotes(client, owner, leader, team):
     add_member(leader, "m@example.com", team)
     m_id = member_by_email(owner, "m@example.com")["id"]
-    assert patch(leader, Paths.member(m_id), {"role": "team_leader"}).status_code == 403
-
-    r = patch(owner, Paths.member(m_id), {"role": "team_leader"})
+    r = patch(leader, Paths.member(m_id), {"role": "team_leader"})
     assert r.status_code == 200 and r.json()["role"] == "team_leader"
     assert "members.add" in r.json()["permissions"]
+
+    assert patch(leader, Paths.member(m_id), {"role": "member"}).status_code == 403
+    r = patch(owner, Paths.member(m_id), {"role": "member"})
+    assert r.status_code == 200 and r.json()["role"] == "member"
 
 
 def test_bundles_grant_team_permissions(client, owner, team):

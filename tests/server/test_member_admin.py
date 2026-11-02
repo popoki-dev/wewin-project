@@ -110,10 +110,11 @@ def test_team_leader_edits_and_deletes_own_team_members(owner, leader, member):
     assert delete(leader, Paths.member(member.id)).status_code == 200
 
 
-def test_team_leader_cannot_move_members_or_change_base_roles(owner, leader, member):
+def test_team_leader_cannot_move_members_elsewhere_or_demote(owner, leader, member):
     support = create_team(owner, "Support")
     assert patch(leader, Paths.member(member.id), {"team_id": support}).status_code == 403
-    assert patch(leader, Paths.member(member.id), {"role": "team_leader"}).status_code == 403
+    lead_id = member_by_email(owner, "lead@example.com")["id"]
+    assert patch(leader, Paths.member(lead_id), {"role": "member"}).status_code == 403
 
 
 def test_team_leader_stays_within_own_team(client, owner, leader):

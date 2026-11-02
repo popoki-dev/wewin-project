@@ -43,8 +43,8 @@ class FakeMembersApi:
 
 ROLE_PERMISSIONS = {
     "owner": ["members.add", "members.assign_roles", "members.reset_device", "members.view", "teams.create"],
-    "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.reset_device",
-                    "members.team", "members.view", "revenue.view"],
+    "team_leader": ["members.add", "members.assign_roles", "members.delete", "members.edit", "members.promote",
+                    "members.reset_device", "members.team", "members.view", "revenue.view"],
     "member": ["projects.view"],
 }
 
@@ -391,3 +391,28 @@ def test_filters_combine_and_clear(tmp_path, monkeypatch):
     assert emails(vm) == ["sam@b.co"]
     vm.clearFilters()
     assert len(vm.filteredMembers) == 4 and not vm.filterActive
+
+
+
+def test_owner_changes_role_when_editing(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "role": "team_leader"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", 9, True, "", "team_leader")
+    assert api.calls[0] == ("update_member", 5, {"team_id": 9, "role": "team_leader"})
+
+
+def test_team_leader_promotes_within_own_teams_only(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "team_leader")
+    assert vm.canPromote(SAM) and vm.canChangeRole(SAM)
+    assert not vm.canPromote({**SAM, "team_id": 99})
+    assert not vm.canPromote({**SAM, "role": "team_leader"})
+    api.results["update_member"] = ApiResult(True, 200, {**SAM, "role": "team_leader"})
+    vm.saveMember(SAM, "Sam", "sam@b.co", -1, True, "", "team_leader")
+    assert api.calls[0] == ("update_member", 5, {"role": "team_leader"})
+
+
+def test_unchanged_role_is_not_sent(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, "owner")
+    api.results["update_member"] = ApiResult(True, 200, SAM)
+    vm.saveMember(SAM, "Sammy", "sam@b.co", -1, True, "", "member")
+    assert api.calls[0] == ("update_member", 5, {"full_name": "Sammy"})

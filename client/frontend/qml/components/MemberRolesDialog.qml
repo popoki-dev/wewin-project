@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import WeWin.ViewModels
 import "../themes"
 
-// Assign a member's base role (Owner only) and role bundles. Bundles the current
+// Assign a member's role bundles (the base role is set in the Edit dialog). Bundles the current
 // user may not hand out (they lack some of its permissions) are shown but locked.
 AppDialog {
     id: dialog
@@ -15,7 +15,6 @@ AppDialog {
     function openFor(m) {
         member = m
         selected = m.role_bundles.map(b => b.id)
-        roleBox.selectValue(m.role)
         MembersViewModel.clearMessages()
         open()
     }
@@ -32,14 +31,6 @@ AppDialog {
     Connections {
         target: MembersViewModel
         function onMemberRolesSaved() { if (dialog.opened) dialog.close() }
-    }
-
-    AppComboBox {
-        id: roleBox
-        visible: AuthViewModel.isOwner
-        Layout.fillWidth: true
-        label: qsTr("Base role")
-        model: [{ value: "member", text: qsTr("Member") }, { value: "team_leader", text: qsTr("Team Leader") }]
     }
 
     Label {
@@ -112,8 +103,7 @@ AppDialog {
         text: qsTr("Save roles")
         busy: MembersViewModel.busy
         enabled: !MembersViewModel.busy
-        onClicked: MembersViewModel.saveMemberRoles(dialog.member.id,
-                                                    AuthViewModel.isOwner ? roleBox.currentValue : "",
-                                                    dialog.selected)
+        // The base role (Member / Team Leader) is set in the Edit dialog.
+        onClicked: MembersViewModel.saveMemberRoles(dialog.member.id, "", dialog.selected)
     }
 }

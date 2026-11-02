@@ -159,3 +159,49 @@ def test_migration_turns_existing_leaders_into_team_leaders():
     with engine.connect() as conn:
         assert dict(conn.execute(text("SELECT id, team_id FROM users ORDER BY id")).all()) == {1: 5, 2: 5}
     engine.dispose()
+
+
+# ----------------------------------------------------------------- promotion
+def test_owner_sets_role_when_editing(owner, teams):
+    add_member(owner, "sam@example.com", teams["Sales"])
+    sam = member_by_email(owner, "sam@example.com")["id"]
+    r = patch(owner, Paths.member(sam), {"role": "team_leader"})
+    assert r.status_code == 200 and [t["name"] for t in r.json()["led_teams"]] == ["Sales"]
+    r = patch(owner, Paths.member(sam), {"role": "member", "team_id": teams["Ops"]})
+    assert r.status_code == 200 and (r.json()["role"], r.json()["team_name"]) == ("member", "Ops")
+
+
+def test_team_leader_makes_a_team_member_a_co_leader(owner, teams, leader):
+    add_member(owner, "sam@example.com", teams["Sales"])
+    sam = member_by_email(owner, "sam@example.com")["id"]
+    r = patch(leader, Paths.member(sam), {"role": "team_leader"})
+    assert r.status_code == 200
+    assert (r.json()["role"], r.json()["team_id"], [t["name"] for t in r.json()["led_teams"]]) == (
+        "team_leader", None, ["Sales"],
+    )
+    sales = next(t for t in owner.get(Paths.TEAMS).json() if t["name"] == "Sales")
+    assert sorted(p["name"] for p in sales["leaders"]) == ["lead@example.com", "sam@example.com"]
+
+
+def test_team_leader_promotion_limits(client, owner, teams, leader):
+    add_member(owner, "sam@example.com", teams["Sales"])
+    add_member(owner, "olga@example.com", teams["Ops"])
+    owner.post(Paths.MEMBERS, {"email": "lone@example.com", "initial_password": "Initial-pass-1"})
+    sam = member_by_email(owner, "sam@example.com")["id"]
+    olga = member_by_email(owner, "olga@example.com")["id"]
+    lone = member_by_email(owner, "lone@example.com")["id"]
+
+    assert patch(leader, Paths.member(olga), {"role": "team_leader"}).status_code == 403  # not their team
+    assert patch(leader, Paths.member(lone), {"role": "team_leader"}).status_code == 403  # no team
+    assert patch(leader, Paths.member(sam), {"role": "team_leader", "team_id": teams["Support"]}).status_code == 403
+    assert patch(leader, Paths.member(leader.id), {"role": "member"}).status_code == 403  # no demotions
+    patch(leader, Paths.member(sam), {"role": "team_leader"})
+    assert patch(leader, Paths.member(sam), {"role": "member"}).status_code == 403  # nor of co-leaders
+
+
+def test_promotion_needs_the_permission(client, owner, teams):
+    add_member(owner, "a@example.com", teams["Sales"])
+    add_member(owner, "b@example.com", teams["Sales"])
+    a = first_login(client, "a@example.com", pc(5))
+    b = member_by_email(owner, "b@example.com")["id"]
+    assert patch(a, Paths.member(b), {"role": "team_leader"}).status_code == 403

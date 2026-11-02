@@ -173,7 +173,7 @@ The new account must change its password at first sign-in.
 
 | Status | When |
 |---|---|
-| 403 | The caller lacks the permission for the change: `members.edit` for details, the Owner or `members.team` (within the limits above) for `team_id`, the Owner for `role`, or `members.assign_roles` plus every permission in each bundle added or removed. Also returned for a target outside a non-owner's own team's plain members, or for bundle changes on the Owner. |
+| 403 | The caller lacks the permission for the change: `members.edit` for details, the Owner or `members.team` (within the limits above) for `team_id`, the Owner for `role` (except `members.promote`, which lets a non-owner set `"role": "team_leader"` on a plain member of one of their teams; that member then leads their current team), or `members.assign_roles` plus every permission in each bundle added or removed. Also returned for a target outside a non-owner's own team's plain members, or for bundle changes on the Owner. |
 | 404 | The member, team or a role bundle doesn't exist. |
 | 409 | The new email is already registered. |
 | 422 | `new_password` fails the policy; someone tried to disable themselves, set their own password, or put the Owner in a team; or a Team Leader would be left without a team. |

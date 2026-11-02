@@ -240,6 +240,17 @@ class MembersViewModel(QObject):
         return self._auth.isOwner or self._in_my_scope(member, "members.delete")
 
     @Slot("QVariant", result=bool)
+    def canPromote(self, member: dict) -> bool:
+        """Non-owners with members.promote: make a plain member of their teams a co-leader."""
+        return not self._auth.isOwner and self._in_my_scope(member, "members.promote")
+
+    @Slot("QVariant", result=bool)
+    def canChangeRole(self, member: dict) -> bool:
+        if member.get("role") == "owner":
+            return False
+        return self._auth.isOwner or self.canPromote(member)
+
+    @Slot("QVariant", result=bool)
     def canBringIntoTeam(self, member: dict) -> bool:
         """Non-owners with members.team: a plain member with no team can join one of their teams."""
         return (
@@ -445,7 +456,8 @@ class MembersViewModel(QObject):
 
     @Slot(int, str, "QVariantList")
     def saveMemberRoles(self, user_id: int, role: str, bundle_ids: list) -> None:
-        """Set a member's role bundles, and base role too when `role` is given (Owner only)."""
+        """Set a member's role bundles, and base role too when `role` is given (Owner only).
+        The Edit dialog is where roles are normally changed; this stays for API completeness."""
         body: dict = {"role_bundle_ids": [int(i) for i in bundle_ids]}
         if role and self._auth.isOwner:
             body["role"] = role
@@ -457,12 +469,16 @@ class MembersViewModel(QObject):
 
         self._call(self._api.update_member, user_id, body, on_ok=saved)
 
-    @Slot("QVariant", str, str, int, bool, str)
+    @Slot("QVariant", str, str, int, bool, str, str)
     def saveMember(
-        self, member: dict, full_name: str, email: str, team_id: int, is_active: bool, new_password: str
+        self, member: dict, full_name: str, email: str, team_id: int, is_active: bool, new_password: str,
+        role: str = "",
     ) -> None:
         """Send only what changed. `team_id`: UNCHANGED (-1) leaves it, NO_TEAM (0) clears it
-        (Owner only here); an empty `new_password` leaves the password."""
+        (Owner only here); an empty `new_password` leaves the password; `role` "" leaves the role.
+
+        With a role change to Team Leader, `team_id` is the team they will lead (the Owner's
+        choice; a Team Leader's promotion always uses the member's current team)."""
         email = email.strip().lower()
         if not _EMAIL_RE.match(email):
             self._set_state(False, "Enter a valid email address.", ["email"])
@@ -474,6 +490,8 @@ class MembersViewModel(QObject):
             body["email"] = email
         if team_id != UNCHANGED and self._auth.isOwner and team_id != (member.get("team_id") or NO_TEAM):
             body["team_id"] = team_id if team_id > 0 else None
+        if role and role != member.get("role") and self.canChangeRole(member):
+            body["role"] = role
         if is_active != member.get("is_active", True):
             body["is_active"] = is_active
         if new_password:

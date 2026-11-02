@@ -377,12 +377,23 @@ class MemberService:
         user.team = team
 
     def _change_role(self, actor: User, user: User, body: MemberUpdate, client: ClientInfo) -> None:
-        """Owner only. Member → Team Leader leads the given team (or their own team);
-        Team Leader → Member stops leading and joins the given team, if any."""
+        """Member → Team Leader leads the given team (or their own team); Team Leader →
+        Member stops leading and joins the given team, if any.
+
+        The Owner does both. Holders of `members.promote` (Team Leaders by default) only make
+        a plain member of one of their teams a Team Leader of that same team, so a team can
+        have several leaders; they cannot demote anyone.
+        """
         if user.role == Role.OWNER:
             raise ServiceError(403, "The Owner already has every permission.")
         if actor.role != Role.OWNER:
-            raise ServiceError(403, "Only the Owner can change a member's base role.")
+            if body.role != Role.TEAM_LEADER.value:
+                raise ServiceError(403, "Only the Owner can make a Team Leader a Member.")
+            if not actor.can(Permission.MEMBERS_PROMOTE):
+                raise ServiceError(403, NO_PERMISSION)
+            self._ensure_manageable(actor, user)  # a plain member of their teams, not themselves
+            if body.team_given() and body.team_id != user.team_id:
+                raise ServiceError(403, "A new Team Leader leads the team they are already in.")
         was = user.role.value
         if body.role == Role.TEAM_LEADER.value:
             team_id = body.team_id if body.team_given() else user.team_id
