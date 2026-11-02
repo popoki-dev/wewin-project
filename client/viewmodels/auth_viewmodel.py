@@ -19,6 +19,10 @@ SERVER_POLL_MS = 5_000
 # end the session; one dropped request alone does not.
 MAX_MISSED_HEARTBEATS = 2
 CONNECTION_LOST = "Lost connection to the server, so you were signed out. Sign in again once it is reachable."
+CONNECTION_LOST_RESUMING = (
+    "Lost connection to the server, so you were signed out. "
+    "You will be signed back in automatically once it is reachable."
+)
 
 
 class AuthViewModel(QObject):
@@ -59,6 +63,8 @@ class AuthViewModel(QObject):
         self._probe_pending = False
         self._heartbeat_pending = False
         self._missed_heartbeats = 0
+        # After a lost connection with "Remember me": sign back in once the server answers.
+        self._resume_when_online = False
 
         self._server = ""
         self._access_token = ""
@@ -256,12 +262,15 @@ class AuthViewModel(QObject):
             self._server_poll.start()
         self.sessionChanged.emit()
 
-    def _end_session(self) -> None:
+    def _end_session(self, keep_stored: bool = False) -> None:
+        """Forget the session. `keep_stored` leaves "Remember me" credentials on disk."""
         self._refresh_timer.stop()
         self._missed_heartbeats = 0
-        email = self._user.get("email", "")
-        self._storage.clear_refresh_token(self._server, email)
-        self._storage.clear_device_secret(self._server, email)
+        if not keep_stored:
+            self._resume_when_online = False
+            email = self._user.get("email", "")
+            self._storage.clear_refresh_token(self._server, email)
+            self._storage.clear_device_secret(self._server, email)
         self._use_device_secret("", "")
         self._access_token = ""
         self._refresh_token = ""
@@ -314,12 +323,25 @@ class AuthViewModel(QObject):
         self._api.health(server, done)
 
     def _lose_connection(self) -> None:
-        """End the session locally; the server cannot be told, but its tokens expire on their own."""
-        self._end_session()
+        """End the session locally; the server cannot be told, but its tokens expire on their own.
+
+        With "Remember me" the stored credentials are kept, and the sign-in page's server
+        check signs the user back in as soon as the server answers again.
+        """
+        resume = self._remember
+        server = self._server
+        self._end_session(keep_stored=resume)
+        self._resume_when_online = resume
+        # Keep checking the server the session was on.
+        self._server_check_seq += 1
+        self._checked_server = server
+        self._probe_pending = False
+        if not self._server_poll.isActive():
+            self._server_poll.start()
         self._set_server_status("offline")
         # Not a "connection" error: it explains why the user is back on the sign-in page,
         # so it stays until they sign in again rather than vanishing when the server returns.
-        self._set_error(CONNECTION_LOST)
+        self._set_error(CONNECTION_LOST_RESUMING if resume else CONNECTION_LOST)
 
     def _probe_server(self) -> None:
         seq = self._server_check_seq
@@ -333,6 +355,8 @@ class AuthViewModel(QObject):
             self._set_server_status("online" if online else "offline")
             if online and self._error_is_connection:
                 self._set_error("")
+            if online and self._resume_when_online and not self._access_token and not self._busy:
+                self._resume_from_storage(after_lost_connection=True)
 
         self._api.health(self._checked_server, done)
 
@@ -350,6 +374,7 @@ class AuthViewModel(QObject):
             return
 
         self._set_error("")
+        self._resume_when_online = False
         self._set_busy(True)
 
         def done(result: ApiResult) -> None:
@@ -369,7 +394,11 @@ class AuthViewModel(QObject):
     @Slot()
     def restoreSession(self) -> None:
         """Sign in silently with the stored refresh token, if "Remember me" was used."""
-        if not self._storage.remember_me or self._busy:
+        self._resume_from_storage(after_lost_connection=False)
+
+    def _resume_from_storage(self, after_lost_connection: bool) -> None:
+        self._resume_when_online = False
+        if not self._storage.remember_me or self._busy or self._access_token:
             return
         server, email = self._storage.server_url, self._storage.email
         token = self._storage.load_refresh_token(server, email)
@@ -384,14 +413,20 @@ class AuthViewModel(QObject):
             self._set_busy(False)
             if result.ok:
                 self._start_session(server, result.data, remember=True)
-            elif result.status == 401:
+                if after_lost_connection:
+                    self._set_error("")
+                return
+            self._use_device_secret("", "")
+            if result.status == 401:
                 self._storage.clear_refresh_token(server, email)
                 self._storage.clear_device_secret(server, email)
-                self._use_device_secret("", "")
                 self._set_error(SESSION_EXPIRED)
-            elif result.status == 0:
+            elif result.status == 0 or result.status >= 500:
                 self._set_server_status("offline")
-                self._set_error(result.error, connection=True)
+                if after_lost_connection:
+                    self._resume_when_online = True  # try again at the next successful check
+                else:
+                    self._set_error(result.error, connection=True)
 
         self._api.refresh(server, token, done)
 

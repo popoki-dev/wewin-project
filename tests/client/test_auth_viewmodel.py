@@ -310,18 +310,88 @@ def signed_in_vm(storage, api, remember=False):
     return vm
 
 
+SERVER, EMAIL = "http://localhost:8000", "admin9531@gmail.com"
+
+
+def lose_connection(vm, api):
+    api.results["health"] = OFFLINE
+    vm._poll_server()
+    vm._poll_server()
+
+
 def test_lost_connection_signs_out_after_repeated_failures(storage, api):
-    vm = signed_in_vm(storage, api, remember=True)
+    vm = signed_in_vm(storage, api)
     api.results["health"] = OFFLINE
     vm._poll_server()
     assert vm.loggedIn  # one dropped check is tolerated
     vm._poll_server()
     assert not vm.loggedIn
-    assert "Lost connection" in vm.errorMessage and vm.serverStatus == "offline"
+    assert "Sign in again" in vm.errorMessage and vm.serverStatus == "offline"
     assert api.signer is None
-    # Nothing that could resume the session is left behind.
-    assert storage.load_refresh_token("http://localhost:8000", "admin9531@gmail.com") == ""
-    assert storage.load_device_secret("http://localhost:8000", "admin9531@gmail.com") == ""
+
+
+def test_with_remember_me_credentials_are_kept_for_resuming(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    lose_connection(vm, api)
+    assert not vm.loggedIn and "signed back in automatically" in vm.errorMessage
+    assert storage.load_refresh_token(SERVER, EMAIL) == "refresh-1"
+    assert storage.load_device_secret(SERVER, EMAIL) == "secret-1"
+
+
+def test_without_remember_me_nothing_is_kept(storage, api):
+    vm = signed_in_vm(storage, api)
+    lose_connection(vm, api)
+    assert storage.load_refresh_token(SERVER, EMAIL) == ""
+    assert storage.load_device_secret(SERVER, EMAIL) == ""
+
+
+def test_signed_back_in_when_the_server_returns(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    lose_connection(vm, api)
+    vm._poll_server()  # still down: nothing happens
+    assert not vm.loggedIn and not [c for c in api.calls if c[0] == "refresh"]
+
+    api.results["health"] = ONLINE
+    api.results["refresh"] = ApiResult(True, 200, {**TOKENS, "refresh_token": "refresh-2", "device_secret": None})
+    vm._poll_server()
+    assert vm.loggedIn and vm.errorMessage == ""
+    assert api.calls[-1] == ("refresh", SERVER, "refresh-1")
+    assert api.signer is not None
+
+
+def test_resume_retries_while_the_server_is_still_failing(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    lose_connection(vm, api)
+    api.results["health"] = ONLINE
+    api.results["refresh"] = ApiResult(False, 502, {}, "Request failed (HTTP 502).")
+    vm._poll_server()
+    assert not vm.loggedIn and "signed back in automatically" in vm.errorMessage
+    api.results["refresh"] = ApiResult(True, 200, {**TOKENS, "device_secret": None})
+    vm._poll_server()
+    assert vm.loggedIn
+
+
+def test_expired_session_is_not_resumed(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    lose_connection(vm, api)
+    api.results["health"] = ONLINE
+    api.results["refresh"] = ApiResult(False, 401, {}, "Session expired.")
+    vm._poll_server()
+    assert not vm.loggedIn and "expired" in vm.errorMessage
+    assert storage.load_refresh_token(SERVER, EMAIL) == ""
+    calls = len(api.calls)
+    vm._poll_server()
+    assert [c[0] for c in api.calls[calls:]] == ["health"]  # no further attempts
+
+
+def test_signing_in_by_hand_cancels_the_resume(storage, api):
+    vm = signed_in_vm(storage, api, remember=True)
+    lose_connection(vm, api)
+    api.results["login"] = ApiResult(False, 0, {}, "Could not reach the server.")
+    vm.login("localhost:8000", EMAIL, "pw", True)
+    api.results["health"] = ONLINE
+    vm._poll_server()
+    assert not [c for c in api.calls if c[0] == "refresh"]
 
 
 def test_a_successful_check_resets_the_count(storage, api):
@@ -358,11 +428,9 @@ def test_unreachable_server_during_token_refresh_signs_out(storage, api):
     assert not vm.loggedIn and "Lost connection" in vm.errorMessage
 
 
-def test_lost_connection_message_stays_when_server_returns(storage, api):
+def test_lost_connection_message_stays_when_server_returns_without_remember_me(storage, api):
     vm = signed_in_vm(storage, api)
-    api.results["health"] = OFFLINE
-    vm._poll_server()
-    vm._poll_server()
+    lose_connection(vm, api)
     api.results["health"] = ONLINE
     vm.checkServer("localhost:8000")
-    assert vm.serverStatus == "online" and "Lost connection" in vm.errorMessage
+    assert vm.serverStatus == "online" and "Lost connection" in vm.errorMessage and not vm.loggedIn
