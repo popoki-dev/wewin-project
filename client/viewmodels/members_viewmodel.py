@@ -15,6 +15,8 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 NO_TEAM = 0
 UNCHANGED = -1
 ALL_TEAMS = -1  # team filter: no restriction
+PAGE_SIZES = (10, 20, 50, 100)
+GAP = -1  # in pageNumbers: an ellipsis between page numbers
 DATE_FORMAT = "YYYY-MM-DD"
 
 
@@ -72,6 +74,9 @@ class MembersViewModel(QObject):
         self._filter_role = ""
         self._filter_from = ""
         self._filter_to = ""
+        # Pagination of the filtered list (page is 0-based).
+        self._page_size = PAGE_SIZES[0]
+        self._page = 0
         auth.sessionChanged.connect(self._on_session_changed)
         self.changed.connect(self.filterChanged)
 
@@ -161,31 +166,104 @@ class MembersViewModel(QObject):
             result.append(m)
         return result
 
+    def _refilter(self) -> None:
+        """A filter changed: show the first page of the new result."""
+        self._page = 0
+        self.filterChanged.emit()
+
     @Slot(str)
     def setFilterText(self, text: str) -> None:
         self._filter_text = text
-        self.filterChanged.emit()
+        self._refilter()
 
     @Slot(int)
     def setFilterTeam(self, team_id: int) -> None:
         self._filter_team = team_id
-        self.filterChanged.emit()
+        self._refilter()
 
     @Slot(str)
     def setFilterRole(self, role: str) -> None:
         self._filter_role = role
-        self.filterChanged.emit()
+        self._refilter()
 
     @Slot(str, str)
     def setFilterDates(self, start: str, end: str) -> None:
         self._filter_from, self._filter_to = start, end
-        self.filterChanged.emit()
+        self._refilter()
 
     @Slot()
     def clearFilters(self) -> None:
         self._filter_text, self._filter_team, self._filter_role = "", ALL_TEAMS, ""
         self._filter_from = self._filter_to = ""
-        self.filterChanged.emit()
+        self._refilter()
+
+    # ------------------------------------------------------------ pagination
+    @Property("QVariantList", constant=True)
+    def pageSizes(self) -> list[int]:
+        return list(PAGE_SIZES)
+
+    @Property(int, notify=filterChanged)
+    def pageSize(self) -> int:
+        return self._page_size
+
+    @Property(int, notify=filterChanged)
+    def pageCount(self) -> int:
+        return max(1, -(-len(self.filteredMembers) // self._page_size))
+
+    @Property(int, notify=filterChanged)
+    def pageIndex(self) -> int:
+        """The current page, 0-based; kept in range when the list shrinks (e.g. after a refresh)."""
+        return min(self._page, self.pageCount - 1)
+
+    @Property("QVariantList", notify=filterChanged)
+    def pagedMembers(self) -> list[dict]:
+        start = self.pageIndex * self._page_size
+        return self.filteredMembers[start:start + self._page_size]
+
+    @Property(str, notify=filterChanged)
+    def pageRange(self) -> str:
+        """e.g. "11–20 of 37"; empty when there is nothing to show."""
+        total = len(self.filteredMembers)
+        if not total:
+            return ""
+        start = self.pageIndex * self._page_size
+        return f"{start + 1}–{min(start + self._page_size, total)} of {total}"
+
+    @Property("QVariantList", notify=filterChanged)
+    def pageNumbers(self) -> list[int]:
+        """1-based page numbers to show, with GAP (-1) for skipped runs: 1 … 4 5 6 … 12."""
+        count, current = self.pageCount, self.pageIndex + 1
+        shown = sorted({1, count, current - 1, current, current + 1} & set(range(1, count + 1)))
+        result: list[int] = []
+        for n in shown:
+            if result and n - result[-1] > 1:
+                result.append(GAP) if n - result[-1] > 2 else result.append(n - 1)
+            result.append(n)
+        return result
+
+    @Slot(int)
+    def setPageSize(self, size: int) -> None:
+        if size in PAGE_SIZES and size != self._page_size:
+            # Keep the first row on screen in view.
+            first = self.pageIndex * self._page_size
+            self._page_size = size
+            self._page = first // size
+            self.filterChanged.emit()
+
+    @Slot(int)
+    def setPage(self, index: int) -> None:
+        index = max(0, min(index, self.pageCount - 1))
+        if index != self.pageIndex:
+            self._page = index
+            self.filterChanged.emit()
+
+    @Slot()
+    def nextPage(self) -> None:
+        self.setPage(self.pageIndex + 1)
+
+    @Slot()
+    def previousPage(self) -> None:
+        self.setPage(self.pageIndex - 1)
 
     @Property("QVariantList", notify=changed)
     def bundles(self) -> list[dict]:

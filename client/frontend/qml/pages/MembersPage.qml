@@ -216,7 +216,7 @@ Item {
                 }
 
                 Repeater {
-                    model: MembersViewModel.filteredMembers
+                    model: MembersViewModel.pagedMembers
                     delegate: ColumnLayout {
                         id: row
                         required property var modelData
@@ -374,6 +374,92 @@ Item {
                             }
                             Item { visible: !MembersViewModel.canResetDevice(row.modelData); implicitWidth: 120 }
                         }
+                    }
+                }
+
+                // ---------------------------------------------- pagination
+                Rectangle {
+                    visible: MembersViewModel.filteredMembers.length > 0
+                    Layout.fillWidth: true
+                    height: 1
+                    color: Theme.border
+                }
+                RowLayout {
+                    visible: MembersViewModel.filteredMembers.length > 0
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Label { text: qsTr("Rows per page"); color: Theme.textMuted; font.pixelSize: 12 }
+                    AppComboBox {
+                        id: pageSizeBox
+                        Layout.preferredWidth: 90
+                        Layout.maximumWidth: 90
+                        model: MembersViewModel.pageSizes.map(n => ({ value: n, text: String(n) }))
+                        Component.onCompleted: selectValue(MembersViewModel.pageSize)
+                        onActivated: MembersViewModel.setPageSize(currentValue)
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: MembersViewModel.pageRange
+                        color: Theme.textMuted
+                        font.pixelSize: 12
+                    }
+
+                    AppButton {
+                        variant: "ghost"
+                        iconName: "back"
+                        text: qsTr("Previous")
+                        implicitWidth: 104
+                        implicitHeight: 34
+                        font.pixelSize: 12
+                        enabled: MembersViewModel.pageIndex > 0
+                        opacity: enabled ? 1 : 0.4
+                        onClicked: MembersViewModel.previousPage()
+                    }
+                    Repeater {
+                        model: MembersViewModel.pageNumbers
+                        delegate: Item {
+                            id: pageCell
+                            required property int modelData
+                            readonly property bool current: modelData === MembersViewModel.pageIndex + 1
+                            implicitWidth: Math.max(34, numberLabel.implicitWidth + 16)
+                            implicitHeight: 34
+                            Rectangle {
+                                anchors.fill: parent
+                                visible: pageCell.modelData > 0
+                                radius: Theme.radiusSmall
+                                color: pageCell.current ? Theme.accent : pageHover.hovered ? Theme.surfaceHover : "transparent"
+                            }
+                            Label {
+                                id: numberLabel
+                                anchors.centerIn: parent
+                                text: pageCell.modelData > 0 ? String(pageCell.modelData) : "…"
+                                color: pageCell.current ? Theme.accentText : Theme.textMuted
+                                font.pixelSize: 13
+                                font.weight: pageCell.current ? Font.DemiBold : Font.Normal
+                            }
+                            HoverHandler {
+                                id: pageHover
+                                enabled: pageCell.modelData > 0
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            TapHandler {
+                                enabled: pageCell.modelData > 0 && !pageCell.current
+                                onTapped: MembersViewModel.setPage(pageCell.modelData - 1)
+                            }
+                            Accessible.role: Accessible.Button
+                            Accessible.name: pageCell.modelData > 0 ? qsTr("Page %1").arg(pageCell.modelData) : ""
+                        }
+                    }
+                    AppButton {
+                        variant: "ghost"
+                        text: qsTr("Next")
+                        implicitWidth: 80
+                        implicitHeight: 34
+                        font.pixelSize: 12
+                        enabled: MembersViewModel.pageIndex < MembersViewModel.pageCount - 1
+                        opacity: enabled ? 1 : 0.4
+                        onClicked: MembersViewModel.nextPage()
                     }
                 }
             }
