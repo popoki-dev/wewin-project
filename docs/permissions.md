@@ -20,7 +20,7 @@ The catalog is in `shared/permissions.py`:
 |---|---|
 | Members | `members.view`, `members.add`, `members.edit`, `members.delete`, `members.team`, `members.promote`, `members.reset_device`, `members.assign_roles` |
 | Teams | `teams.create`, `teams.rename` |
-| Projects (enforced once the module exists) | `projects.view`, `projects.create`, `projects.edit` |
+| Projects | `projects.view`, `projects.create`, `projects.edit`, `projects.delete`, `projects.check` |
 | Revenue (enforced once the module exists) | `revenue.view`, `revenue.edit` |
 
 A user's **effective permissions** are their base role's permissions plus those of every **role bundle** assigned to them.
@@ -99,7 +99,9 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | Create, rename teams | | | ✓ |
 | Delete teams (members keep their accounts with no team; its Team Leaders become members) | | | ✓ |
 | Define role bundles | | | ✓ |
-| *Planned:* manage projects | view | ✓ | ✓ |
+| See projects | own | own teams' and own | all |
+| Add, edit, delete projects (incl. payment history) | own, until a Leader or Owner check | own teams' and own, until an Owner check | all, always |
+| Check projects (locks them for those below) | | own teams' (Leader check) | all (Owner check) |
 | *Planned:* view/edit revenue | | ✓ | ✓ |
 
 Update this table as each module lands.

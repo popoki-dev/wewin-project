@@ -24,6 +24,7 @@ from ..models import RoleBundle, Team, User
 from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.auth_repository import RefreshSessionRepository
 from ..repositories.device_repository import DeviceRepository
+from ..repositories.project_repository import ProjectRepository
 from ..repositories.role_bundle_repository import RoleBundleRepository
 from ..repositories.team_repository import TeamRepository
 from ..repositories.user_repository import UserRepository
@@ -143,6 +144,7 @@ class MemberService:
         # Done here rather than left to the foreign key's ON DELETE SET NULL, so the
         # result is the same on every database and in this session's loaded objects.
         moved = self.teams.unassign_members(team.id)
+        self.teams.unassign_projects(team.id)
         self.audit.record(
             AuditAction.TEAM_DELETED, client, user_id=actor.id, organization_id=actor.organization_id,
             team_id=team.id, name=team.name, members_unassigned=moved, leaders_demoted=demoted,
@@ -442,6 +444,8 @@ class MemberService:
             deleted_user_id=user.id, email=user.email, full_name=user.full_name, role=user.role.value,
             team_id=user.team_id, led_teams=user.led_team_ids,
         )
+        # Done here rather than left to ON DELETE SET NULL, so it holds on every database.
+        ProjectRepository(self.db).forget_user(user.id)
         self.users.delete(user)
         self.db.commit()
 
