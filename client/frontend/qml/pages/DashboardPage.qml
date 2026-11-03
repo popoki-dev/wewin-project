@@ -9,14 +9,17 @@ AppShell {
     id: shell
     objectName: "appShell"
 
-    onCurrentPageChanged: if (["members", "teams", "roles"].indexOf(currentPage) >= 0) MembersViewModel.refresh()
+    onCurrentPageChanged: {
+        if (["members", "teams", "roles", "projects"].indexOf(currentPage) >= 0) MembersViewModel.refresh()
+        if (currentPage === "projects") ProjectsViewModel.refresh()
+    }
 
     StackLayout {
         anchors.fill: parent
-        currentIndex: ["home", "members", "teams", "roles"].indexOf(shell.currentPage) > 0
-                      ? ["home", "members", "teams", "roles"].indexOf(shell.currentPage) : 0
+        readonly property var pages: ["home", "members", "teams", "roles", "projects"]
+        currentIndex: Math.max(0, pages.indexOf(shell.currentPage))
 
-        // Overview: placeholder until the Projects and Revenue modules land.
+        // Overview: placeholder until the Revenue module lands.
         Item {
             ColumnLayout {
                 anchors.fill: parent
@@ -50,8 +53,8 @@ AppShell {
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
                         text: AuthViewModel.canManageMembers
-                              ? qsTr("Manage your people under Members. Projects and Revenue are coming next.")
-                              : qsTr("Projects and Revenue modules will appear here.")
+                              ? qsTr("Manage your people under Members and your work under Projects. Revenue is coming next.")
+                              : qsTr("Register and track your work under Projects. Revenue is coming next.")
                         color: Theme.textMuted
                     }
                 }
@@ -62,5 +65,6 @@ AppShell {
         MembersPage {}
         TeamsPage {}
         RolesPage {}
+        ProjectsPage {}
     }
 }

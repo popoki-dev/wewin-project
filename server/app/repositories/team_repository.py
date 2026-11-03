@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Team, User, team_leaders
+from ..models import Project, Team, User, team_leaders
 
 
 class TeamRepository:
@@ -55,6 +55,13 @@ class TeamRepository:
             update(User).where(User.team_id == team_id).values(team_id=None).execution_options(synchronize_session="fetch")
         )
         return result.rowcount
+
+    def unassign_projects(self, team_id: int) -> None:
+        """Projects of a deleted team stay, with no team."""
+        self.db.execute(
+            update(Project).where(Project.team_id == team_id).values(team_id=None)
+            .execution_options(synchronize_session="fetch")
+        )
 
     def delete(self, team: Team) -> None:
         self.db.delete(team)

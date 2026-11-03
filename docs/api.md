@@ -206,3 +206,53 @@ Same body as create → `200`. The change applies at once to every member holdin
 ### `DELETE /api/role-bundles/{id}` 🔒 Owner
 `200`. The bundle is removed from everyone who holds it.
 - **The Owner's own device:** `python -m server.manage reset-device <email>` on the server.
+
+## Projects
+
+Amounts are whole US cents (`1200050` = $12,000.50). `details` is stored and returned exactly as sent, including line breaks, tabs and spaces.
+
+**Who sees what:** the Owner sees every project. A Team Leader sees projects of the teams they lead, plus their own. A member sees the projects they created. Anything else returns `404`.
+
+**Checks lock a project:**
+- A **Leader check**, placed by a Team Leader of the project's team, locks it for members.
+- An **Owner check** locks it for Team Leaders and members alike.
+- Changing or deleting a locked project returns `409` with the reason.
+- The Owner is never locked out.
+
+Each project in a response carries `access`: `{"edit", "delete", "check", "uncheck"}` booleans for the caller.
+
+### `GET /api/projects` 🔒 `projects.view`
+`200` returns a list of projects, newest start date first.
+
+### `POST /api/projects` 🔒 `projects.create`
+```json
+{"title": "Website", "start_date": "2026-11-03", "end_date": null, "category": "fixed" | "hourly" | "milestone",
+ "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented",
+ "team_id": 2, "payments": [{"paid_on": "2026-11-05", "description": "Deposit", "amount_cents": 300000}]}
+```
+→ `201` with the project.
+
+- **Defaults:** `start_date` is today if omitted. `end_date` and `monthly_budget_cents` may be `null`. `total_budget_cents` is required, except for `hourly` projects, where it may be `null` (no overall budget).
+- **Team:** the Owner picks any team, or none. A Team Leader picks one of their teams (it may be omitted if they lead exactly one). A member's project always goes to their own team.
+- **422** for a missing title, a missing total budget on a fixed or milestone project, a negative amount, a completion date before the start, a payment that isn't above zero, or an unknown category.
+
+### `GET /api/projects/{id}` 🔒 `projects.view`
+`200` with the project, including `paid_cents`, `payments`, `leader_check` and `owner_check` (each `{"at", "by"}` or `null`), `team_name` and `created_by_name`.
+
+### `PUT /api/projects/{id}` 🔒 `projects.edit`
+Same body as create, and it replaces the project. `payments` is the whole new payment history:
+- an entry with an `id` updates that payment;
+- an entry without an `id` adds a payment;
+- payments left out are deleted.
+
+Returns `422` if an `id` doesn't belong to this project, and `409` if the project is locked by a check.
+
+### `DELETE /api/projects/{id}` 🔒 `projects.delete`
+`200`. The project is deleted along with its payment history. Returns `409` if it's locked by a check.
+
+### `POST /api/projects/{id}/check` 🔒 Owner, or `projects.check` on their teams' projects
+`200` with the project. The Owner places the Owner check; a Team Leader places the Leader check. Returns `409` if the Owner has already checked it.
+
+### `DELETE /api/projects/{id}/check?level=leader|owner` 🔒
+`200` with the project. The Owner removes either check. A Team Leader removes the Leader check while the Owner hasn't checked the project.
+

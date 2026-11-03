@@ -27,6 +27,8 @@ class Permission(str, enum.Enum):
     PROJECTS_VIEW = "projects.view"
     PROJECTS_CREATE = "projects.create"
     PROJECTS_EDIT = "projects.edit"
+    PROJECTS_DELETE = "projects.delete"
+    PROJECTS_CHECK = "projects.check"
     REVENUE_VIEW = "revenue.view"
     REVENUE_EDIT = "revenue.edit"
 
@@ -52,9 +54,11 @@ CATALOG: list[tuple[str, list[tuple[Permission, str, str]]]] = [
         (Permission.TEAMS_RENAME, "Rename teams", "Rename any team in the organization."),
     ]),
     ("Projects", [
-        (Permission.PROJECTS_VIEW, "View projects", "See projects."),
-        (Permission.PROJECTS_CREATE, "Create projects", "Start new projects."),
-        (Permission.PROJECTS_EDIT, "Edit projects", "Change existing projects."),
+        (Permission.PROJECTS_VIEW, "View projects", "See projects (members: their own; leaders: their teams')."),
+        (Permission.PROJECTS_CREATE, "Create projects", "Register new projects."),
+        (Permission.PROJECTS_EDIT, "Edit projects", "Change projects and their payment history, unless locked by a check."),
+        (Permission.PROJECTS_DELETE, "Delete projects", "Delete projects, unless locked by a check."),
+        (Permission.PROJECTS_CHECK, "Check projects", "Mark their teams' projects as checked, locking them for members."),
     ]),
     ("Revenue", [
         (Permission.REVENUE_VIEW, "View revenue", "See revenue figures."),
@@ -76,10 +80,18 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         Permission.PROJECTS_VIEW,
         Permission.PROJECTS_CREATE,
         Permission.PROJECTS_EDIT,
+        Permission.PROJECTS_DELETE,
+        Permission.PROJECTS_CHECK,
         Permission.REVENUE_VIEW,
         Permission.REVENUE_EDIT,
     }),
-    Role.MEMBER: frozenset({Permission.PROJECTS_VIEW}),
+    # Members manage their own projects.
+    Role.MEMBER: frozenset({
+        Permission.PROJECTS_VIEW,
+        Permission.PROJECTS_CREATE,
+        Permission.PROJECTS_EDIT,
+        Permission.PROJECTS_DELETE,
+    }),
 }
 
 # Any Members permission is useless without seeing the members it applies to.
@@ -91,6 +103,10 @@ _IMPLIED = {
     Permission.MEMBERS_PROMOTE: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_RESET_DEVICE: Permission.MEMBERS_VIEW,
     Permission.MEMBERS_ASSIGN_ROLES: Permission.MEMBERS_VIEW,
+    Permission.PROJECTS_CREATE: Permission.PROJECTS_VIEW,
+    Permission.PROJECTS_EDIT: Permission.PROJECTS_VIEW,
+    Permission.PROJECTS_DELETE: Permission.PROJECTS_VIEW,
+    Permission.PROJECTS_CHECK: Permission.PROJECTS_VIEW,
 }
 
 

@@ -12,7 +12,7 @@ Manage organization members, projects and revenue.
 | Reverse proxy | Caddy (automatic Let's Encrypt HTTPS) |
 | Deployment | Docker Compose on Ubuntu LTS |
 
-**Current milestone:** device-bound sign-in with signed requests, Remember Me, Forgot Password, teams and members (added by the Owner or a Team Leader, with a forced password change at first login), light/dark themes and audit logging. Projects and Revenue come next.
+**Current milestone:** device-bound sign-in with signed requests, Remember Me, Forgot Password, teams and members (added by the Owner or a Team Leader, with a forced password change at first login), projects with payment history and Leader/Owner checks, light/dark themes and audit logging. Revenue comes next.
 
 See [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/api.md), [docs/database.md](docs/database.md) and [docs/permissions.md](docs/permissions.md).
 

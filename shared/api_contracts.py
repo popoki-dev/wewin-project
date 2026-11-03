@@ -24,6 +24,15 @@ class Paths:
     TEAMS = f"{API_PREFIX}/teams"
     MEMBERS = f"{API_PREFIX}/members"
     ROLE_BUNDLES = f"{API_PREFIX}/role-bundles"
+    PROJECTS = f"{API_PREFIX}/projects"
+
+    @staticmethod
+    def project(project_id: int) -> str:
+        return f"{API_PREFIX}/projects/{project_id}"
+
+    @staticmethod
+    def project_check(project_id: int) -> str:
+        return f"{API_PREFIX}/projects/{project_id}/check"
 
     @staticmethod
     def team(team_id: int) -> str:

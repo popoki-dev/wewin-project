@@ -40,7 +40,7 @@ Rectangle {
                         { page: "members",  icon: "users",  text: qsTr("Members"),  ready: AuthViewModel.canManageMembers },
                         { page: "teams",    icon: "grid",   text: qsTr("Teams"),    ready: AuthViewModel.canViewTeams },
                         { page: "roles",    icon: "key",    text: qsTr("Roles"),    ready: AuthViewModel.isOwner },
-                        { page: "projects", icon: "folder", text: qsTr("Projects"), ready: false },
+                        { page: "projects", icon: "folder", text: qsTr("Projects"), ready: AuthViewModel.permissions.indexOf("projects.view") >= 0 },
                         { page: "revenue",  icon: "chart",  text: qsTr("Revenue"),  ready: false }
                     ]
                     delegate: ItemDelegate {
