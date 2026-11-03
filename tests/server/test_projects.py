@@ -221,3 +221,85 @@ def test_hourly_projects_may_have_no_total_budget(owner):
     assert create(owner, category="hourly", total_budget_cents=500_000)["total_budget_cents"] == 500_000
     # Switching to a category that needs one, without giving it, is refused.
     assert put(owner, Paths.project(p["id"]), body(category="fixed", total_budget_cents=None)).status_code == 422
+
+
+# --------------------------------------------------- co-developers & splits
+CODEVS = [
+    {"nationality": "Japan", "name": "Aiko", "external_id": "aiko-dev"},
+    {"nationality": "", "name": "", "external_id": "ben#42"},  # one field is enough
+]
+
+
+def split_payment(**overrides):
+    payment = {"paid_on": "2026-11-05", "description": "Milestone 1", "amount_cents": 100_000,
+               "my_share_cents": 50_000, "fund_location": "Wise USD",
+               "payouts": [{"codeveloper_index": 0, "amount_cents": 30_000},
+                           {"codeveloper_index": 1, "amount_cents": 15_000}]}
+    payment.update(overrides)
+    return payment
+
+
+def test_codevelopers_and_payment_splits(owner):
+    p = create(owner, codevelopers=CODEVS, payments=[split_payment()])
+    assert [(c["name"], c["external_id"]) for c in p["codevelopers"]] == [("Aiko", "aiko-dev"), ("", "ben#42")]
+    pay = p["payments"][0]
+    assert (pay["amount_cents"], pay["my_share_cents"], pay["paid_out_cents"], pay["remaining_cents"]) == (
+        100_000, 50_000, 45_000, 5_000,
+    )
+    assert pay["fund_location"] == "Wise USD"
+    assert [(x["codeveloper_label"], x["amount_cents"]) for x in pay["payouts"]] == [("Aiko", 30_000), ("ben#42", 15_000)]
+    assert (p["paid_cents"], p["remaining_cents"]) == (100_000, 5_000)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"codevelopers": [{"nationality": " ", "name": "", "external_id": ""}]},  # nothing filled in
+        {"payments": [split_payment(my_share_cents=90_000)]},  # splits exceed the total received
+        {"payments": [split_payment(payouts=[{"codeveloper_index": 5, "amount_cents": 1}])]},  # unknown co-dev
+        {"payments": [split_payment(payouts=[{"codeveloper_index": 0, "amount_cents": 1},
+                                             {"codeveloper_index": 0, "amount_cents": 1}])]},  # twice
+        {"payments": [split_payment(my_share_cents=-1)]},
+    ],
+)
+def test_invalid_codevelopers_and_splits_are_rejected(owner, overrides):
+    r = owner.post(Paths.PROJECTS, body(**{"codevelopers": CODEVS, **overrides}))
+    assert r.status_code == 422, r.text
+
+
+def test_editing_codevelopers_keeps_payouts_linked(owner):
+    p = create(owner, codevelopers=CODEVS, payments=[split_payment()])
+    aiko, ben = p["codevelopers"]
+    # Rename Aiko, drop Ben (and so his payout), add Chen and pay him in the same save.
+    codevs = [{**aiko, "name": "Aiko Tanaka"}, {"nationality": "China", "name": "Chen", "external_id": ""}]
+    payment = {**split_payment(), "id": p["payments"][0]["id"],
+               "payouts": [{"codeveloper_index": 0, "amount_cents": 30_000},
+                           {"codeveloper_index": 1, "amount_cents": 10_000}]}
+    r = put(owner, Paths.project(p["id"]), body(codevelopers=codevs, payments=[payment]))
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert [c["name"] for c in out["codevelopers"]] == ["Aiko Tanaka", "Chen"]
+    assert out["codevelopers"][0]["id"] == aiko["id"] and ben["id"] not in {c["id"] for c in out["codevelopers"]}
+    assert [(x["codeveloper_label"], x["amount_cents"]) for x in out["payments"][0]["payouts"]] == [
+        ("Aiko Tanaka", 30_000), ("Chen", 10_000),
+    ]
+    assert out["payments"][0]["remaining_cents"] == 10_000
+
+
+def test_removing_a_codeveloper_removes_their_payouts(owner):
+    p = create(owner, codevelopers=CODEVS, payments=[split_payment()])
+    aiko = p["codevelopers"][0]
+    payment = {**split_payment(), "id": p["payments"][0]["id"],
+               "payouts": [{"codeveloper_index": 0, "amount_cents": 30_000}]}
+    out = put(owner, Paths.project(p["id"]), body(codevelopers=[aiko], payments=[payment])).json()
+    assert [x["codeveloper_label"] for x in out["payments"][0]["payouts"]] == ["Aiko"]
+    assert out["payments"][0]["remaining_cents"] == 20_000
+    # Removing everyone at once is fine too: the payouts go with them.
+    out = put(owner, Paths.project(p["id"]), body(codevelopers=[], payments=[{**payment, "payouts": []}])).json()
+    assert out["codevelopers"] == [] and out["payments"][0]["payouts"] == []
+
+
+def test_codevelopers_of_another_project_are_refused(owner):
+    a = create(owner, codevelopers=CODEVS)
+    b = create(owner, title="Other")
+    assert put(owner, Paths.project(b["id"]), body(codevelopers=[a["codevelopers"][0]])).status_code == 422

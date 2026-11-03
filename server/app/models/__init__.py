@@ -5,7 +5,7 @@ from .auth_session import PasswordResetCode, RefreshSession
 from .base import Base
 from .device import Device, DeviceRequestNonce
 from .organization import Organization
-from .project import Project, ProjectPayment
+from .project import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment
 from .role_bundle import RoleBundle, user_role_bundles
 from .team import Team, team_leaders
 from .user import User
@@ -17,7 +17,9 @@ __all__ = [
     "DeviceRequestNonce",
     "Organization",
     "PasswordResetCode",
+    "PaymentPayout",
     "Project",
+    "ProjectCodeveloper",
     "ProjectPayment",
     "RefreshSession",
     "RoleBundle",

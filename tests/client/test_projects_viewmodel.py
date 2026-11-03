@@ -49,7 +49,8 @@ DETAILS = "Line one\n\n  indented line\n\ttab"
 
 def save(vm, **kw):
     args = {"project_id": 0, "title": "Website", "start": "2026-11-01", "end": "", "category": "fixed",
-            "total_budget": "12,000", "monthly_budget": "", "details": DETAILS, "team_id": 0, "payments": []}
+            "total_budget": "12,000", "monthly_budget": "", "details": DETAILS, "team_id": 0,
+            "codevelopers": [], "payments": []}
     args.update(kw)
     vm.saveProject(*args.values())
 
@@ -82,8 +83,10 @@ def test_save_sends_cents_and_details_untouched(tmp_path, monkeypatch):
     assert body["end_date"] is None and body["team_id"] is None
     assert body["details"] == DETAILS
     assert body["payments"] == [
-        {"paid_on": "2026-11-05", "description": "Deposit", "amount_cents": 300_000},
-        {"paid_on": "2026-12-05", "description": "Second", "amount_cents": 200_025, "id": 9},
+        {"paid_on": "2026-11-05", "description": "Deposit", "amount_cents": 300_000, "my_share_cents": 0,
+         "fund_location": "", "payouts": []},
+        {"paid_on": "2026-12-05", "description": "Second", "amount_cents": 200_025, "my_share_cents": 0,
+         "fund_location": "", "payouts": [], "id": 9},
     ]
 
 
@@ -143,3 +146,60 @@ def test_hourly_projects_may_leave_the_total_blank(tmp_path, monkeypatch):
     assert body["total_budget_cents"] is None and body["monthly_budget_cents"] == 130_000
     save(vm, category="fixed", total_budget="")
     assert vm.errorFields == ["totalBudget"]
+
+
+
+CODEVS = [{"id": 0, "nationality": "Japan", "name": " Aiko ", "external_id": ""},
+          {"id": 7, "nationality": "", "name": "", "external_id": "ben#42"}]
+
+
+def split_row(**kw):
+    row = {"id": 0, "paid_on": "2026-11-05", "description": "M1", "amount": "1,000", "my_share": "500",
+           "fund_location": " Wise USD ", "payouts": [{"codeveloper_index": 0, "amount": "300"},
+                                                     {"codeveloper_index": 1, "amount": "150"}]}
+    row.update(kw)
+    return row
+
+
+def test_codevelopers_and_splits_are_sent(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    save(vm, codevelopers=CODEVS, payments=[split_row()])
+    body = api.calls[0][1]
+    assert body["codevelopers"] == [{"nationality": "Japan", "name": "Aiko", "external_id": ""},
+                                    {"nationality": "", "name": "", "external_id": "ben#42", "id": 7}]
+    assert body["payments"][0] == {
+        "paid_on": "2026-11-05", "description": "M1", "amount_cents": 100_000, "my_share_cents": 50_000,
+        "fund_location": "Wise USD",
+        "payouts": [{"codeveloper_index": 0, "amount_cents": 30_000}, {"codeveloper_index": 1, "amount_cents": 15_000}],
+    }
+
+
+@pytest.mark.parametrize(("kw", "field", "text"), [
+    ({"codevelopers": [{"id": 0, "nationality": " ", "name": "", "external_id": ""}]}, "codevelopers", "Co-developer 1"),
+    ({"payments": [split_row(my_share="900")]}, "payments", "more than the total"),
+    ({"payments": [split_row(payouts=[{"codeveloper_index": -1, "amount": "5"}])]}, "payments", "choose the co-developer"),
+    ({"payments": [split_row(payouts=[{"codeveloper_index": 0, "amount": "5"}, {"codeveloper_index": 0, "amount": "5"}])]},
+     "payments", "only once"),
+    ({"payments": [split_row(my_share="lots")]}, "payments", "your portion"),
+])
+def test_split_validation(tmp_path, monkeypatch, kw, field, text):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    save(vm, **{"codevelopers": CODEVS, **kw})
+    assert vm.errorFields == [field] and text in vm.errorMessage and api.calls == []
+
+
+def test_remaining_is_calculated_live(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch)
+    assert vm.paymentRemaining(split_row()) == {"text": "$50.00", "over": False}
+    assert vm.paymentRemaining(split_row(my_share="900")) == {"text": "-$350.00", "over": True}
+    assert vm.paymentRemaining(split_row(amount="")) == {"text": "", "over": False}
+
+
+def test_fund_locations_are_suggested_most_used_first(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    api.results["list"] = ApiResult(True, 200, {"items": [
+        {"payments": [{"fund_location": "PayPal"}, {"fund_location": "Wise USD"}]},
+        {"payments": [{"fund_location": "Wise USD"}, {"fund_location": ""}]},
+    ]})
+    vm.refresh()
+    assert vm.fundLocations == ["Wise USD", "PayPal"]
