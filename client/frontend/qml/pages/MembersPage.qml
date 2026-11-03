@@ -35,175 +35,195 @@ Item {
     MemberRolesDialog { id: rolesDialog; objectName: "memberRolesDialog" }
     MemberEditDialog { id: editDialog; objectName: "memberEditDialog" }
 
-    ScrollView {
-        id: scroller
+    // Title, messages and the People card's header, filters and pagination stay put;
+    // only the member rows scroll (see listScroller).
+    ColumnLayout {
         anchors.fill: parent
-        contentWidth: availableWidth
-        clip: true
+        anchors.topMargin: 40
+        anchors.bottomMargin: 24
+        spacing: 20
 
-        ColumnLayout {
-            width: scroller.availableWidth
-            spacing: 20
-
-            Item { Layout.preferredHeight: 20 }
-
-            // ------------------------------------------------------- header
-            RowLayout {
-                Layout.leftMargin: 40
-                Layout.rightMargin: 40
+        // ------------------------------------------------------- header
+        RowLayout {
+            Layout.leftMargin: 40
+            Layout.rightMargin: 40
+            Layout.fillWidth: true
+            spacing: 12
+            ColumnLayout {
+                spacing: 4
                 Layout.fillWidth: true
-                spacing: 12
-                ColumnLayout {
-                    spacing: 4
-                    Layout.fillWidth: true
-                    Label { text: qsTr("Members"); color: Theme.text; font.pixelSize: 28; font.weight: Font.Bold; Layout.fillWidth: true }
-                    Label {
-                        text: page.owner ? qsTr("Everyone in your organization.") : AuthViewModel.scopeTeamIds.length > 1 ? qsTr("Members of the teams you lead.") : qsTr("Members of your team.")
-                        color: Theme.textMuted
-                        font.pixelSize: 14
-                    }
+                Label { text: qsTr("Members"); color: Theme.text; font.pixelSize: 28; font.weight: Font.Bold; Layout.fillWidth: true }
+                Label {
+                    text: page.owner ? qsTr("Everyone in your organization.") : AuthViewModel.scopeTeamIds.length > 1 ? qsTr("Members of the teams you lead.") : qsTr("Members of your team.")
+                    color: Theme.textMuted
+                    font.pixelSize: 14
                 }
+            }
+            AppButton {
+                variant: "secondary"
+                iconName: "refresh"
+                text: qsTr("Refresh")
+                busy: MembersViewModel.busy
+                enabled: !MembersViewModel.busy
+                onClicked: { MembersViewModel.clearMessages(); MembersViewModel.refresh() }
+            }
+        }
+
+        Banner {
+            Layout.leftMargin: 40
+            Layout.rightMargin: 40
+            Layout.fillWidth: true
+            kind: "error"
+            text: page.dialogOpen ? "" : MembersViewModel.errorMessage
+        }
+        Banner {
+            Layout.leftMargin: 40
+            Layout.rightMargin: 40
+            Layout.fillWidth: true
+            kind: "success"
+            text: MembersViewModel.errorMessage ? "" : MembersViewModel.notice
+        }
+
+        // ------------------------------------------------------ members list
+        Card {
+            Layout.leftMargin: 40
+            Layout.rightMargin: 40
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            title: qsTr("People")
+            subtitle: MembersViewModel.filterActive
+                      ? qsTr("Showing %1 of %2").arg(MembersViewModel.filteredMembers.length).arg(MembersViewModel.members.length)
+                      : MembersViewModel.members.length === 1 ? qsTr("1 account")
+                      : qsTr("%1 accounts").arg(MembersViewModel.members.length)
+            actions: [
                 AppButton {
-                    variant: "secondary"
-                    iconName: "refresh"
-                    text: qsTr("Refresh")
-                    busy: MembersViewModel.busy
+                    visible: page.canAdd
+                    iconName: "plus"
+                    text: qsTr("Add member")
+                    implicitHeight: 38
                     enabled: !MembersViewModel.busy
-                    onClicked: { MembersViewModel.clearMessages(); MembersViewModel.refresh() }
+                    onClicked: addDialog.openNew()
                 }
-            }
+            ]
 
-            Banner {
-                Layout.leftMargin: 40
-                Layout.rightMargin: 40
+            // ------------------------------------------------- filters
+            ColumnLayout {
                 Layout.fillWidth: true
-                kind: "error"
-                text: page.dialogOpen ? "" : MembersViewModel.errorMessage
-            }
-            Banner {
-                Layout.leftMargin: 40
-                Layout.rightMargin: 40
-                Layout.fillWidth: true
-                kind: "success"
-                text: MembersViewModel.errorMessage ? "" : MembersViewModel.notice
-            }
+                spacing: 10
 
-            // ------------------------------------------------------ members list
-            Card {
-                Layout.leftMargin: 40
-                Layout.rightMargin: 40
-                Layout.fillWidth: true
-                title: qsTr("People")
-                subtitle: MembersViewModel.filterActive
-                          ? qsTr("Showing %1 of %2").arg(MembersViewModel.filteredMembers.length).arg(MembersViewModel.members.length)
-                          : MembersViewModel.members.length === 1 ? qsTr("1 account")
-                          : qsTr("%1 accounts").arg(MembersViewModel.members.length)
-                actions: [
-                    AppButton {
-                        visible: page.canAdd
-                        iconName: "plus"
-                        text: qsTr("Add member")
-                        implicitHeight: 38
-                        enabled: !MembersViewModel.busy
-                        onClicked: addDialog.openNew()
-                    }
-                ]
-
-                // ------------------------------------------------- filters
-                ColumnLayout {
+                RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
-
-                    RowLayout {
+                    AppTextField {
+                        id: searchField
                         Layout.fillWidth: true
-                        spacing: 10
-                        AppTextField {
-                            id: searchField
-                            Layout.fillWidth: true
-                            iconName: "search"
-                            placeholderText: qsTr("Search name or email")
-                            text: MembersViewModel.filterText
-                            field.onTextEdited: MembersViewModel.setFilterText(text)
-                        }
-                        AppComboBox {
-                            id: roleFilter
-                            Layout.preferredWidth: 160
-                            model: [{ value: "", text: qsTr("All roles") },
-                                    { value: "owner", text: qsTr("Owner") },
-                                    { value: "team_leader", text: qsTr("Team Leader") },
-                                    { value: "member", text: qsTr("Member") }]
-                            Component.onCompleted: selectValue(MembersViewModel.filterRole)
-                            onActivated: MembersViewModel.setFilterRole(currentValue)
-                            // Follow the filter however it changes (e.g. Clear filters).
-                            Connections {
-                                target: MembersViewModel
-                                function onFilterChanged() { roleFilter.selectValue(MembersViewModel.filterRole) }
-                            }
-                        }
-                        AppComboBox {
-                            id: teamFilter
-                            Layout.preferredWidth: 180
-                            model: [{ value: -1, text: qsTr("All teams") }, { value: 0, text: qsTr("No team") }]
-                                   .concat(MembersViewModel.teams.map(t => ({ value: t.id, text: t.name })))
-                            Component.onCompleted: selectValue(MembersViewModel.filterTeamId)
-                            onModelChanged: selectValue(MembersViewModel.filterTeamId)
-                            onActivated: MembersViewModel.setFilterTeam(currentValue)
-                            Connections {
-                                target: MembersViewModel
-                                function onFilterChanged() { teamFilter.selectValue(MembersViewModel.filterTeamId) }
-                            }
+                        iconName: "search"
+                        placeholderText: qsTr("Search name or email")
+                        text: MembersViewModel.filterText
+                        field.onTextEdited: MembersViewModel.setFilterText(text)
+                    }
+                    AppComboBox {
+                        id: roleFilter
+                        Layout.preferredWidth: 160
+                        model: [{ value: "", text: qsTr("All roles") },
+                                { value: "owner", text: qsTr("Owner") },
+                                { value: "team_leader", text: qsTr("Team Leader") },
+                                { value: "member", text: qsTr("Member") }]
+                        Component.onCompleted: selectValue(MembersViewModel.filterRole)
+                        onActivated: MembersViewModel.setFilterRole(currentValue)
+                        // Follow the filter however it changes (e.g. Clear filters).
+                        Connections {
+                            target: MembersViewModel
+                            function onFilterChanged() { roleFilter.selectValue(MembersViewModel.filterRole) }
                         }
                     }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Label { text: qsTr("Registered"); color: Theme.textMuted; font.pixelSize: 13 }
-                        AppTextField {
-                            id: fromField
-                            Layout.preferredWidth: 170
-                            Layout.maximumWidth: 170
-                            placeholderText: qsTr("From YYYY-MM-DD")
-                            text: MembersViewModel.filterFrom
-                            field.maximumLength: 10
-                            field.inputMethodHints: Qt.ImhDate
-                            field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
-                            invalid: MembersViewModel.filterErrorFields.indexOf("dateFrom") >= 0
-                            field.onTextEdited: MembersViewModel.setFilterDates(text, toField.text)
-                        }
-                        Label { text: "–"; color: Theme.textMuted }
-                        AppTextField {
-                            id: toField
-                            Layout.preferredWidth: 170
-                            Layout.maximumWidth: 170
-                            placeholderText: qsTr("To YYYY-MM-DD")
-                            text: MembersViewModel.filterTo
-                            field.maximumLength: 10
-                            field.inputMethodHints: Qt.ImhDate
-                            field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
-                            invalid: MembersViewModel.filterErrorFields.indexOf("dateTo") >= 0
-                            field.onTextEdited: MembersViewModel.setFilterDates(fromField.text, text)
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: MembersViewModel.filterError
-                            color: Theme.danger
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                        }
-                        AppButton {
-                            visible: MembersViewModel.filterActive
-                            variant: "ghost"
-                            iconName: "close"
-                            text: qsTr("Clear filters")
-                            implicitHeight: 36
-                            font.pixelSize: 12
-                            onClicked: MembersViewModel.clearFilters()
+                    AppComboBox {
+                        id: teamFilter
+                        Layout.preferredWidth: 180
+                        model: [{ value: -1, text: qsTr("All teams") }, { value: 0, text: qsTr("No team") }]
+                               .concat(MembersViewModel.teams.map(t => ({ value: t.id, text: t.name })))
+                        Component.onCompleted: selectValue(MembersViewModel.filterTeamId)
+                        onModelChanged: selectValue(MembersViewModel.filterTeamId)
+                        onActivated: MembersViewModel.setFilterTeam(currentValue)
+                        Connections {
+                            target: MembersViewModel
+                            function onFilterChanged() { teamFilter.selectValue(MembersViewModel.filterTeamId) }
                         }
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Label { text: qsTr("Registered"); color: Theme.textMuted; font.pixelSize: 13 }
+                    AppTextField {
+                        id: fromField
+                        Layout.preferredWidth: 170
+                        Layout.maximumWidth: 170
+                        placeholderText: qsTr("From YYYY-MM-DD")
+                        text: MembersViewModel.filterFrom
+                        field.maximumLength: 10
+                        field.inputMethodHints: Qt.ImhDate
+                        field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
+                        invalid: MembersViewModel.filterErrorFields.indexOf("dateFrom") >= 0
+                        field.onTextEdited: MembersViewModel.setFilterDates(text, toField.text)
+                    }
+                    Label { text: "–"; color: Theme.textMuted }
+                    AppTextField {
+                        id: toField
+                        Layout.preferredWidth: 170
+                        Layout.maximumWidth: 170
+                        placeholderText: qsTr("To YYYY-MM-DD")
+                        text: MembersViewModel.filterTo
+                        field.maximumLength: 10
+                        field.inputMethodHints: Qt.ImhDate
+                        field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
+                        invalid: MembersViewModel.filterErrorFields.indexOf("dateTo") >= 0
+                        field.onTextEdited: MembersViewModel.setFilterDates(fromField.text, text)
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: MembersViewModel.filterError
+                        color: Theme.danger
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                    }
+                    AppButton {
+                        visible: MembersViewModel.filterActive
+                        variant: "ghost"
+                        iconName: "close"
+                        text: qsTr("Clear filters")
+                        implicitHeight: 36
+                        font.pixelSize: 12
+                        onClicked: MembersViewModel.clearFilters()
+                    }
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            ScrollView {
+                id: listScroller
+                objectName: "memberListScroller"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 120
+                contentWidth: availableWidth
+                clip: true
+                // Show the scrollbar whenever the rows overflow, beside (not over) the row buttons.
+                readonly property bool overflowing: contentHeight > height
+                rightPadding: overflowing ? 16 : 0
+                ScrollBar.vertical.policy: overflowing ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+
+                // A new page or filter starts at the top of the list.
+                Connections {
+                    target: MembersViewModel
+                    function onFilterChanged() { listScroller.contentItem.contentY = 0 }
+                }
+
+                ColumnLayout {
+                    width: listScroller.availableWidth
+                    spacing: 10
 
                 Label {
                     visible: MembersViewModel.members.length > 0 && MembersViewModel.filteredMembers.length === 0
@@ -376,95 +396,98 @@ Item {
                         }
                     }
                 }
-
-                // ---------------------------------------------- pagination
-                Rectangle {
-                    visible: MembersViewModel.filteredMembers.length > 0
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Theme.border
-                }
-                RowLayout {
-                    visible: MembersViewModel.filteredMembers.length > 0
-                    Layout.fillWidth: true
-                    spacing: 10
-
-                    Label { text: qsTr("Rows per page"); color: Theme.textMuted; font.pixelSize: 12 }
-                    AppComboBox {
-                        id: pageSizeBox
-                        Layout.preferredWidth: 90
-                        Layout.maximumWidth: 90
-                        model: MembersViewModel.pageSizes.map(n => ({ value: n, text: String(n) }))
-                        Component.onCompleted: selectValue(MembersViewModel.pageSize)
-                        onActivated: MembersViewModel.setPageSize(currentValue)
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: MembersViewModel.pageRange
-                        color: Theme.textMuted
-                        font.pixelSize: 12
-                    }
-
-                    AppButton {
-                        variant: "ghost"
-                        iconName: "back"
-                        text: qsTr("Previous")
-                        implicitWidth: 104
-                        implicitHeight: 34
-                        font.pixelSize: 12
-                        enabled: MembersViewModel.pageIndex > 0
-                        opacity: enabled ? 1 : 0.4
-                        onClicked: MembersViewModel.previousPage()
-                    }
-                    Repeater {
-                        model: MembersViewModel.pageNumbers
-                        delegate: Item {
-                            id: pageCell
-                            required property int modelData
-                            readonly property bool current: modelData === MembersViewModel.pageIndex + 1
-                            implicitWidth: Math.max(34, numberLabel.implicitWidth + 16)
-                            implicitHeight: 34
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: pageCell.modelData > 0
-                                radius: Theme.radiusSmall
-                                color: pageCell.current ? Theme.accent : pageHover.hovered ? Theme.surfaceHover : "transparent"
-                            }
-                            Label {
-                                id: numberLabel
-                                anchors.centerIn: parent
-                                text: pageCell.modelData > 0 ? String(pageCell.modelData) : "…"
-                                color: pageCell.current ? Theme.accentText : Theme.textMuted
-                                font.pixelSize: 13
-                                font.weight: pageCell.current ? Font.DemiBold : Font.Normal
-                            }
-                            HoverHandler {
-                                id: pageHover
-                                enabled: pageCell.modelData > 0
-                                cursorShape: Qt.PointingHandCursor
-                            }
-                            TapHandler {
-                                enabled: pageCell.modelData > 0 && !pageCell.current
-                                onTapped: MembersViewModel.setPage(pageCell.modelData - 1)
-                            }
-                            Accessible.role: Accessible.Button
-                            Accessible.name: pageCell.modelData > 0 ? qsTr("Page %1").arg(pageCell.modelData) : ""
-                        }
-                    }
-                    AppButton {
-                        variant: "ghost"
-                        text: qsTr("Next")
-                        implicitWidth: 80
-                        implicitHeight: 34
-                        font.pixelSize: 12
-                        enabled: MembersViewModel.pageIndex < MembersViewModel.pageCount - 1
-                        opacity: enabled ? 1 : 0.4
-                        onClicked: MembersViewModel.nextPage()
-                    }
                 }
             }
 
-            Item { Layout.preferredHeight: 20 }
+            // ---------------------------------------------- pagination
+            Rectangle {
+                visible: MembersViewModel.filteredMembers.length > 0
+                Layout.fillWidth: true
+                height: 1
+                color: Theme.border
+            }
+            RowLayout {
+                visible: MembersViewModel.filteredMembers.length > 0
+                Layout.fillWidth: true
+                spacing: 10
+
+                Label { text: qsTr("Rows per page"); color: Theme.textMuted; font.pixelSize: 12 }
+                AppComboBox {
+                    id: pageSizeBox
+                    Layout.preferredWidth: 90
+                    Layout.maximumWidth: 90
+                    model: MembersViewModel.pageSizes.map(n => ({ value: n, text: String(n) }))
+                    Component.onCompleted: selectValue(MembersViewModel.pageSize)
+                    onActivated: MembersViewModel.setPageSize(currentValue)
+                    Connections {
+                        target: MembersViewModel
+                        function onFilterChanged() { pageSizeBox.selectValue(MembersViewModel.pageSize) }
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: MembersViewModel.pageRange
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                }
+
+                AppButton {
+                    variant: "ghost"
+                    iconName: "back"
+                    text: qsTr("Previous")
+                    implicitWidth: 104
+                    implicitHeight: 34
+                    font.pixelSize: 12
+                    enabled: MembersViewModel.pageIndex > 0
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: MembersViewModel.previousPage()
+                }
+                Repeater {
+                    model: MembersViewModel.pageNumbers
+                    delegate: Item {
+                        id: pageCell
+                        required property int modelData
+                        readonly property bool current: modelData === MembersViewModel.pageIndex + 1
+                        implicitWidth: Math.max(34, numberLabel.implicitWidth + 16)
+                        implicitHeight: 34
+                        Rectangle {
+                            anchors.fill: parent
+                            visible: pageCell.modelData > 0
+                            radius: Theme.radiusSmall
+                            color: pageCell.current ? Theme.accent : pageHover.hovered ? Theme.surfaceHover : "transparent"
+                        }
+                        Label {
+                            id: numberLabel
+                            anchors.centerIn: parent
+                            text: pageCell.modelData > 0 ? String(pageCell.modelData) : "…"
+                            color: pageCell.current ? Theme.accentText : Theme.textMuted
+                            font.pixelSize: 13
+                            font.weight: pageCell.current ? Font.DemiBold : Font.Normal
+                        }
+                        HoverHandler {
+                            id: pageHover
+                            enabled: pageCell.modelData > 0
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                        TapHandler {
+                            enabled: pageCell.modelData > 0 && !pageCell.current
+                            onTapped: MembersViewModel.setPage(pageCell.modelData - 1)
+                        }
+                        Accessible.role: Accessible.Button
+                        Accessible.name: pageCell.modelData > 0 ? qsTr("Page %1").arg(pageCell.modelData) : ""
+                    }
+                }
+                AppButton {
+                    variant: "ghost"
+                    text: qsTr("Next")
+                    implicitWidth: 80
+                    implicitHeight: 34
+                    font.pixelSize: 12
+                    enabled: MembersViewModel.pageIndex < MembersViewModel.pageCount - 1
+                    opacity: enabled ? 1 : 0.4
+                    onClicked: MembersViewModel.nextPage()
+                }
+            }
         }
     }
 }
