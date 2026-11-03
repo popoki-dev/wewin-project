@@ -13,6 +13,11 @@ Item {
     readonly property bool owner: AuthViewModel.isOwner
     readonly property bool wide: width >= 960
     readonly property bool canAdd: AuthViewModel.permissions.indexOf("members.add") >= 0
+    // Reserve an action column only when some row on this page uses it, so the name and
+    // team get the room otherwise.
+    readonly property bool anyEdit: MembersViewModel.pagedMembers.some(m => MembersViewModel.canEditMember(m))
+    readonly property bool anyRoles: MembersViewModel.pagedMembers.some(m => MembersViewModel.canEditRoles(m))
+    readonly property bool anyReset: MembersViewModel.pagedMembers.some(m => MembersViewModel.canResetDevice(m))
     // Dialogs show their own errors; the page banner would only repeat them behind the overlay.
     readonly property bool dialogOpen: addDialog.opened || editDialog.opened || rolesDialog.opened
 
@@ -280,56 +285,18 @@ Item {
                                     color: Theme.accent; font.pixelSize: 12
                                     elide: Text.ElideRight; Layout.fillWidth: true
                                 }
-                            }
-                            // Team, plus a Team Leader's quick moves in and out of their team.
-                            ColumnLayout {
-                                visible: page.wide
-                                Layout.preferredWidth: 140
-                                Layout.maximumWidth: 140
-                                spacing: 0
-                                Label {
-                                    readonly property var led: row.modelData.led_teams || []
+                                TeamCell {
+                                    visible: !page.wide && row.modelData.role !== "owner"  // the Owner has no team
                                     Layout.fillWidth: true
-                                    text: led.length > 0 ? qsTr("Leads %1").arg(led.map(t => t.name).join(", "))
-                                        : row.modelData.team_name || (row.modelData.role === "owner" ? "—" : qsTr("No team"))
-                                    color: row.modelData.team_name || led.length > 0 ? Theme.textMuted : Theme.textFaint
-                                    font.pixelSize: 13; elide: Text.ElideRight
-                                    ToolTip.visible: leadHover.hovered && led.length > 1
-                                    ToolTip.text: text
-                                    HoverHandler { id: leadHover }
+                                    member: row.modelData
                                 }
-                                LinkButton {
-                                    id: bringIn
-                                    visible: MembersViewModel.canBringIntoTeam(row.modelData)
-                                    text: MembersViewModel.scopeTeams.length > 1 ? qsTr("Add to a team ▾") : qsTr("Add to my team")
-                                    font.pixelSize: 12
-                                    enabled: !MembersViewModel.busy
-                                    onClicked: {
-                                        const scope = MembersViewModel.scopeTeams
-                                        if (scope.length === 1) MembersViewModel.setMemberTeam(row.modelData, scope[0].id)
-                                        else teamMenu.popup(bringIn, 0, bringIn.height)
-                                    }
-                                    Menu {
-                                        id: teamMenu
-                                        Instantiator {
-                                            model: MembersViewModel.scopeTeams
-                                            delegate: MenuItem {
-                                                required property var modelData
-                                                text: modelData.name
-                                                onTriggered: MembersViewModel.setMemberTeam(row.modelData, modelData.id)
-                                            }
-                                            onObjectAdded: (index, object) => teamMenu.insertItem(index, object)
-                                            onObjectRemoved: (index, object) => teamMenu.removeItem(object)
-                                        }
-                                    }
-                                }
-                                LinkButton {
-                                    visible: MembersViewModel.canTakeOutOfTeam(row.modelData)
-                                    text: qsTr("Remove from team")
-                                    font.pixelSize: 12
-                                    enabled: !MembersViewModel.busy
-                                    onClicked: MembersViewModel.setMemberTeam(row.modelData, 0)
-                                }
+                            }
+                            // Team column (wide windows); narrow windows show it under the email.
+                            TeamCell {
+                                visible: page.wide
+                                Layout.preferredWidth: 110
+                                Layout.maximumWidth: 110
+                                member: row.modelData
                             }
                             Item {
                                 // Fixed-width column, so the team column lines up across rows.
@@ -350,7 +317,7 @@ Item {
                                 }
                             }
                             Label {
-                                Layout.preferredWidth: 160
+                                Layout.preferredWidth: 130
                                 horizontalAlignment: Text.AlignRight
                                 text: page.statusLabel(row.modelData)
                                 color: row.modelData.must_change_password ? Theme.warning : Theme.textFaint
@@ -367,7 +334,7 @@ Item {
                                 enabled: !MembersViewModel.busy
                                 onClicked: editDialog.openFor(row.modelData)
                             }
-                            Item { visible: !MembersViewModel.canEditMember(row.modelData); implicitWidth: 64 }
+                            Item { visible: page.anyEdit && !MembersViewModel.canEditMember(row.modelData); implicitWidth: 64 }
                             AppButton {
                                 variant: "ghost"
                                 implicitWidth: 70
@@ -378,7 +345,7 @@ Item {
                                 enabled: !MembersViewModel.busy
                                 onClicked: rolesDialog.openFor(row.modelData)
                             }
-                            Item { visible: !MembersViewModel.canEditRoles(row.modelData); implicitWidth: 70 }
+                            Item { visible: page.anyRoles && !MembersViewModel.canEditRoles(row.modelData); implicitWidth: 70 }
                             AppButton {
                                 variant: "ghost"
                                 implicitWidth: 120
@@ -392,7 +359,7 @@ Item {
                                 ToolTip.text: qsTr("Sign this person out and let their next sign-in register a new PC.")
                                 onClicked: MembersViewModel.resetDevice(row.modelData.id)
                             }
-                            Item { visible: !MembersViewModel.canResetDevice(row.modelData); implicitWidth: 120 }
+                            Item { visible: page.anyReset && !MembersViewModel.canResetDevice(row.modelData); implicitWidth: 120 }
                         }
                     }
                 }
@@ -488,6 +455,59 @@ Item {
                     onClicked: MembersViewModel.nextPage()
                 }
             }
+        }
+    }
+
+    // A member's team ("Leads …" for Team Leaders, "No team"), plus a Team Leader's
+    // quick moves in and out of their teams. Used in the Team column and, in narrow
+    // windows, under the member's email.
+    component TeamCell: ColumnLayout {
+        id: cell
+        property var member: ({})
+        spacing: 0
+        Label {
+            readonly property var led: cell.member.led_teams || []
+            Layout.fillWidth: true
+            text: led.length > 0 ? qsTr("Leads %1").arg(led.map(t => t.name).join(", "))
+                : cell.member.team_name || (cell.member.role === "owner" ? "—" : qsTr("No team"))
+            color: cell.member.team_name || led.length > 0 ? Theme.textMuted : Theme.textFaint
+            font.pixelSize: 13; elide: Text.ElideRight
+            // Long names are cut short to keep the column narrow; hovering shows them in full.
+            ToolTip.visible: leadHover.hovered && (truncated || led.length > 1)
+            ToolTip.text: text
+            HoverHandler { id: leadHover }
+        }
+        LinkButton {
+            id: bringIn
+            visible: MembersViewModel.canBringIntoTeam(cell.member)
+            text: MembersViewModel.scopeTeams.length > 1 ? qsTr("Add to a team ▾") : qsTr("Add to my team")
+            font.pixelSize: 12
+            enabled: !MembersViewModel.busy
+            onClicked: {
+                const scope = MembersViewModel.scopeTeams
+                if (scope.length === 1) MembersViewModel.setMemberTeam(cell.member, scope[0].id)
+                else teamMenu.popup(bringIn, 0, bringIn.height)
+            }
+            Menu {
+                id: teamMenu
+                Instantiator {
+                    model: MembersViewModel.scopeTeams
+                    delegate: MenuItem {
+                        required property var modelData
+                        text: modelData.name
+                        onTriggered: MembersViewModel.setMemberTeam(cell.member, modelData.id)
+                    }
+                    onObjectAdded: (index, object) => teamMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => teamMenu.removeItem(object)
+                }
+            }
+        }
+        LinkButton {
+            visible: MembersViewModel.canTakeOutOfTeam(cell.member)
+            text: qsTr("Remove from team")
+            font.pixelSize: 12
+            enabled: !MembersViewModel.busy
+            onClicked: MembersViewModel.setMemberTeam(cell.member, 0)
         }
     }
 }
