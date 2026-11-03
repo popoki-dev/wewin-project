@@ -183,13 +183,17 @@ class ProjectsViewModel(QObject):
 
         self._api.list(self._auth.serverUrl, self._auth.access_token(), got)
 
-    @Slot(int, str, str, str, str, str, str, str, int, "QVariantList")
+    @Slot(int, str, str, str, str, str, str, str, int, "QVariantList", "QVariantList")
     def saveProject(
         self, project_id: int, title: str, start: str, end: str, category: str,
-        total_budget: str, monthly_budget: str, details: str, team_id: int, payments: list,
+        total_budget: str, monthly_budget: str, details: str, team_id: int, codevelopers: list, payments: list,
     ) -> None:
         """Create (project_id 0) or update a project. Amounts are dollars as typed;
-        `team_id` 0 means no team (the server files members' projects itself)."""
+        `team_id` 0 means no team (the server files members' projects itself).
+
+        `codevelopers`: [{id, nationality, name, external_id}]. `payments`: [{id, paid_on,
+        description, amount, my_share, fund_location, payouts: [{codeveloper_index, amount}]}],
+        where `codeveloper_index` is a position in `codevelopers`."""
         problem, fields = "", []
         body: dict = {}
         try:
@@ -226,7 +230,11 @@ class ProjectsViewModel(QObject):
             except ValueError:
                 problem, fields = "Enter the monthly budget in dollars, or leave it blank.", ["monthlyBudget"]
         if not problem:
-            body["payments"], problem = self._payments_body(payments)
+            body["codevelopers"], problem = self._codevelopers_body(codevelopers)
+            if problem:
+                fields = ["codevelopers"]
+        if not problem:
+            body["payments"], problem = self._payments_body(payments, len(body["codevelopers"]))
             if problem:
                 fields = ["payments"]
         if problem:
@@ -248,8 +256,49 @@ class ProjectsViewModel(QObject):
             self._call(self._api.create, body, on_ok=saved)
 
     @staticmethod
-    def _payments_body(rows: list) -> tuple[list[dict], str]:
-        """Payment rows from the dialog ({id, paid_on, description, amount}) for the API."""
+    def _codevelopers_body(rows: list) -> tuple[list[dict], str]:
+        result = []
+        for n, row in enumerate(rows, start=1):
+            row = dict(row)
+            entry = {k: str(row.get(k, "")).strip() for k in ("nationality", "name", "external_id")}
+            if not any(entry.values()):
+                return [], f"Co-developer {n}: enter a nationality, a name or an ID."
+            if int(row.get("id") or 0) > 0:
+                entry["id"] = int(row["id"])
+            result.append(entry)
+        return result, ""
+
+    @staticmethod
+    def _split(row: dict) -> tuple[int, int, list[tuple[int, int]]]:
+        """(total received, your portion, [(co-developer index, amount)]) in cents.
+        Raises ValueError with a user-facing message (without the "Payment n:" prefix)."""
+        try:
+            total = parse_money(str(row.get("amount", "")))
+        except ValueError:
+            raise ValueError("enter the total received in dollars.") from None
+        if not total:
+            raise ValueError("enter a total received above zero.")
+        try:
+            mine = parse_money(str(row.get("my_share", ""))) or 0
+        except ValueError:
+            raise ValueError("enter your portion in dollars, or leave it blank.") from None
+        payouts = []
+        for payout in row.get("payouts") or []:
+            payout = dict(payout)
+            index = int(payout.get("codeveloper_index", -1))
+            if index < 0:
+                raise ValueError("choose the co-developer for each payout.")
+            try:
+                cents = parse_money(str(payout.get("amount", "")))
+            except ValueError:
+                raise ValueError("enter each payout in dollars.") from None
+            if not cents:
+                raise ValueError("enter each payout as an amount above zero.")
+            payouts.append((index, cents))
+        return total, mine, payouts
+
+    def _payments_body(self, rows: list, codeveloper_count: int) -> tuple[list[dict], str]:
+        """Payment rows from the dialog for the API (see saveProject)."""
         result = []
         for n, row in enumerate(rows, start=1):
             row = dict(row)
@@ -258,17 +307,51 @@ class ProjectsViewModel(QObject):
             except ValueError:
                 return [], f"Payment {n}: enter the date as YYYY-MM-DD."
             try:
-                cents = parse_money(str(row.get("amount", "")))
-            except ValueError:
-                return [], f"Payment {n}: enter the amount in dollars."
-            if not cents:
-                return [], f"Payment {n}: enter an amount above zero."
-            entry = {"paid_on": day.isoformat(), "description": str(row.get("description", "")).strip(),
-                     "amount_cents": cents}
+                total, mine, payouts = self._split(row)
+            except ValueError as problem:
+                return [], f"Payment {n}: {problem}"
+            indexes = [i for i, _ in payouts]
+            if any(i >= codeveloper_count for i in indexes):
+                return [], f"Payment {n}: a payout is to a co-developer who is not on the project."
+            if len(indexes) != len(set(indexes)):
+                return [], f"Payment {n}: each co-developer can be paid only once per payment."
+            if mine + sum(c for _, c in payouts) > total:
+                return [], f"Payment {n}: your portion and the payouts are more than the total received."
+            entry = {
+                "paid_on": day.isoformat(),
+                "description": str(row.get("description", "")).strip(),
+                "amount_cents": total,
+                "my_share_cents": mine,
+                "fund_location": str(row.get("fund_location", "")).strip(),
+                "payouts": [{"codeveloper_index": i, "amount_cents": c} for i, c in payouts],
+            }
             if int(row.get("id") or 0) > 0:
                 entry["id"] = int(row["id"])
             result.append(entry)
         return result, ""
+
+    @Slot("QVariant", result="QVariant")
+    def paymentRemaining(self, row) -> dict:
+        """Live summary for a payment row: {text, over}. `text` is "" while amounts are incomplete."""
+        try:
+            total, mine, payouts = self._split(dict(row))
+        except ValueError:
+            return {"text": "", "over": False}
+        remaining = total - mine - sum(c for _, c in payouts)
+        if remaining < 0:
+            return {"text": f"-{format_money(-remaining)}", "over": True}
+        return {"text": format_money(remaining), "over": False}
+
+    @Property("QStringList", notify=changed)
+    def fundLocations(self) -> list[str]:
+        """Where funds have been kept before, most used first, to suggest when typing."""
+        counts: dict[str, int] = {}
+        for project in self._projects:
+            for payment in project.get("payments", []):
+                location = (payment.get("fund_location") or "").strip()
+                if location:
+                    counts[location] = counts.get(location, 0) + 1
+        return sorted(counts, key=lambda loc: (-counts[loc], loc.casefold()))
 
     @Slot("QVariant")
     def deleteProject(self, project: dict) -> None:

@@ -227,23 +227,40 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 ### `POST /api/projects` 🔒 `projects.create`
 ```json
 {"title": "Website", "start_date": "2026-11-03", "end_date": null, "category": "fixed" | "hourly" | "milestone",
- "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented",
- "team_id": 2, "payments": [{"paid_on": "2026-11-05", "description": "Deposit", "amount_cents": 300000}]}
+ "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented", "team_id": 2,
+ "codevelopers": [{"nationality": "Japan", "name": "Aiko", "external_id": "aiko-dev"},
+                  {"nationality": "", "name": "", "external_id": "ben#42"}],
+ "payments": [{"paid_on": "2026-11-05", "description": "Milestone 1",
+               "amount_cents": 100000, "my_share_cents": 50000, "fund_location": "Wise USD",
+               "payouts": [{"codeveloper_index": 0, "amount_cents": 30000},
+                           {"codeveloper_index": 1, "amount_cents": 15000}]}]}
 ```
 → `201` with the project.
+
+- **Co-developers:** each needs at least one of `nationality`, `name` or `external_id` (their ID).
+- **Payments:**
+  - `amount_cents` is the **total received** and `my_share_cents` is **your portion** (default 0).
+  - `fund_location` is free text saying where the money is kept.
+  - Each payout names a co-developer by **position** in `codevelopers` (`codeveloper_index`), so a co-developer added in the same request can be paid. Each co-developer can be paid at most once per payment.
+- **Remaining:** your portion plus the payouts must not exceed the total received. The rest is returned as `remaining_cents`.
 
 - **Defaults:** `start_date` is today if omitted. `end_date` and `monthly_budget_cents` may be `null`. `total_budget_cents` is required, except for `hourly` projects, where it may be `null` (no overall budget).
 - **Team:** the Owner picks any team, or none. A Team Leader picks one of their teams (it may be omitted if they lead exactly one). A member's project always goes to their own team.
 - **422** for a missing title, a missing total budget on a fixed or milestone project, a negative amount, a completion date before the start, a payment that isn't above zero, or an unknown category.
 
 ### `GET /api/projects/{id}` 🔒 `projects.view`
-`200` with the project, including `paid_cents`, `payments`, `leader_check` and `owner_check` (each `{"at", "by"}` or `null`), `team_name` and `created_by_name`.
+`200` with the project. The response includes:
+- `paid_cents` (total received) and `remaining_cents`;
+- `codevelopers` (`{"id", "nationality", "name", "external_id"}`);
+- `payments`, each with `my_share_cents`, `fund_location`, `payouts` (`{"codeveloper_id", "codeveloper_label", "amount_cents"}`), `paid_out_cents` and `remaining_cents`;
+- `leader_check` and `owner_check` (each `{"at", "by"}` or `null`);
+- `team_name` and `created_by_name`.
 
 ### `PUT /api/projects/{id}` 🔒 `projects.edit`
-Same body as create, and it replaces the project. `payments` is the whole new payment history:
-- an entry with an `id` updates that payment;
-- an entry without an `id` adds a payment;
-- payments left out are deleted.
+Same body as create, and it replaces the project. `codevelopers` and `payments` are the whole new lists:
+- an entry with an `id` updates that entry;
+- an entry without an `id` adds one;
+- entries left out are deleted. Removing a co-developer also removes their payouts.
 
 Returns `422` if an `id` doesn't belong to this project, and `409` if the project is locked by a check.
 

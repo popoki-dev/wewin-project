@@ -180,7 +180,7 @@ Item {
                                         text: row.hasTotal
                                               ? qsTr("%1 of %2").arg(ProjectsViewModel.money(row.modelData.paid_cents))
                                                                 .arg(ProjectsViewModel.money(row.modelData.total_budget_cents))
-                                              : qsTr("%1 paid").arg(ProjectsViewModel.money(row.modelData.paid_cents))
+                                              : qsTr("%1 received").arg(ProjectsViewModel.money(row.modelData.paid_cents))
                                         color: Theme.textMuted; font.pixelSize: 12; elide: Text.ElideRight
                                     }
                                     Rectangle {
@@ -195,6 +195,12 @@ Item {
                                             radius: 2
                                             color: row.modelData.paid_cents > row.modelData.total_budget_cents ? Theme.danger : Theme.accent
                                         }
+                                    }
+                                    Label {
+                                        visible: row.modelData.payments.length > 0
+                                        Layout.fillWidth: true
+                                        text: qsTr("Remaining %1").arg(ProjectsViewModel.money(row.modelData.remaining_cents))
+                                        color: Theme.textFaint; font.pixelSize: 11; elide: Text.ElideRight
                                     }
                                 }
                                 // Checks.

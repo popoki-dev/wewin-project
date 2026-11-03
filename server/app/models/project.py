@@ -55,10 +55,32 @@ class Project(Base):
         lazy="selectin",
         order_by="(ProjectPayment.paid_on, ProjectPayment.id)",
     )
+    codevelopers: Mapped[list[ProjectCodeveloper]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="ProjectCodeveloper.id"
+    )
+
+
+class ProjectCodeveloper(Base):
+    """Someone a project's income is shared with. At least one of the three fields is set."""
+
+    __tablename__ = "project_codevelopers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    nationality: Mapped[str] = mapped_column(String(100), default="")
+    name: Mapped[str] = mapped_column(String(200), default="")
+    external_id: Mapped[str] = mapped_column(String(100), default="")  # their ID, e.g. a platform username
+
+    @property
+    def label(self) -> str:
+        return self.name or self.external_id or self.nationality
 
 
 class ProjectPayment(Base):
-    """One entry of a project's payment history."""
+    """One entry of a project's payment history: money received and how it was split.
+
+    remaining = amount (total received) - my_share - the payouts to co-developers; never negative.
+    """
 
     __tablename__ = "project_payments"
 
@@ -66,6 +88,28 @@ class ProjectPayment(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     paid_on: Mapped[date] = mapped_column(Date)
     description: Mapped[str] = mapped_column(String(300), default="")
-    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)  # total received
+    my_share_cents: Mapped[int] = mapped_column(BigInteger, default=0)  # the portion you received
+    fund_location: Mapped[str] = mapped_column(String(200), default="")  # where the money is kept
 
     project: Mapped[Project] = relationship(back_populates="payments")
+    payouts: Mapped[list[PaymentPayout]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="PaymentPayout.id"
+    )
+
+    @property
+    def remaining_cents(self) -> int:
+        return self.amount_cents - self.my_share_cents - sum(p.amount_cents for p in self.payouts)
+
+
+class PaymentPayout(Base):
+    """What a payment paid one co-developer."""
+
+    __tablename__ = "payment_payouts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payment_id: Mapped[int] = mapped_column(ForeignKey("project_payments.id", ondelete="CASCADE"), index=True)
+    codeveloper_id: Mapped[int] = mapped_column(ForeignKey("project_codevelopers.id", ondelete="CASCADE"), index=True)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+
+    codeveloper: Mapped[ProjectCodeveloper] = relationship(lazy="selectin")

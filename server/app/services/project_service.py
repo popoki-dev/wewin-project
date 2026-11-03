@@ -18,11 +18,21 @@ from sqlalchemy.orm import Session
 from shared.enums import AuditAction, Role
 from shared.permissions import Permission
 
-from ..models import Project, ProjectPayment, User
+from ..models import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment, User
 from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.team_repository import TeamRepository
-from ..schemas.projects import CheckOut, PaymentIn, PaymentOut, ProjectAccess, ProjectIn, ProjectOut
+from ..schemas.projects import (
+    CheckOut,
+    CodeveloperIn,
+    CodeveloperOut,
+    PaymentIn,
+    PaymentOut,
+    PayoutOut,
+    ProjectAccess,
+    ProjectIn,
+    ProjectOut,
+)
 from .errors import ServiceError
 
 NOT_FOUND = "Project not found."
@@ -151,15 +161,17 @@ class ProjectService:
     def create(self, actor: User, body: ProjectIn, client: ClientInfo) -> ProjectOut:
         if not actor.can(Permission.PROJECTS_CREATE):
             raise ServiceError(403, NO_PERMISSION)
-        if any(p.id is not None for p in body.payments):
-            raise ServiceError(422, "New projects cannot refer to existing payments.")
+        if any(p.id is not None for p in body.payments) or any(c.id is not None for c in body.codevelopers):
+            raise ServiceError(422, "New projects cannot refer to existing payments or co-developers.")
         project = Project(
             organization_id=actor.organization_id,
             team_id=self._resolve_team(actor, body.team_id),
             created_by_id=actor.id,
         )
         self._apply(project, body)
-        project.payments = [self._payment(p) for p in body.payments]
+        codevelopers = [self._codeveloper(c) for c in body.codevelopers]
+        project.codevelopers = codevelopers
+        project.payments = [self._payment(p, codevelopers) for p in body.payments]
         self.projects.add(project)
         self.audit.record(
             AuditAction.PROJECT_CREATED, client, user_id=actor.id, organization_id=actor.organization_id,
@@ -174,7 +186,8 @@ class ProjectService:
         project.team_id = self._resolve_team(actor, body.team_id, current=project.team_id)
         project.team = None if project.team_id is None else self.teams.get(project.team_id)
         self._apply(project, body)
-        changes = self._sync_payments(project, body.payments)
+        codevelopers, codev_changes = self._sync_codevelopers(project, body.codevelopers)
+        changes = {**codev_changes, **self._sync_payments(project, body.payments, codevelopers)}
         self.audit.record(
             AuditAction.PROJECT_UPDATED, client, user_id=actor.id, organization_id=actor.organization_id,
             project_id=project.id, title=project.title, **changes,
@@ -246,40 +259,88 @@ class ProjectService:
         project.details = body.details
 
     @staticmethod
-    def _payment(entry: PaymentIn) -> ProjectPayment:
-        return ProjectPayment(paid_on=entry.paid_on, description=entry.description, amount_cents=entry.amount_cents)
+    def _codeveloper(entry: CodeveloperIn) -> ProjectCodeveloper:
+        return ProjectCodeveloper(nationality=entry.nationality, name=entry.name, external_id=entry.external_id)
 
-    def _sync_payments(self, project: Project, entries: list[PaymentIn]) -> dict:
+    def _sync_codevelopers(
+        self, project: Project, entries: list[CodeveloperIn]
+    ) -> tuple[list[ProjectCodeveloper], dict]:
+        """Make the co-developers match `entries` (update by id, add new, delete the rest).
+        Returns them in `entries` order, which is what payouts' `codeveloper_index` refers to."""
+        existing = {c.id: c for c in project.codevelopers}
+        ids = [e.id for e in entries if e.id is not None]
+        if len(ids) != len(set(ids)) or not set(ids) <= existing.keys():
+            raise ServiceError(422, "The co-developers refer to entries that are not part of this project.")
+        result: list[ProjectCodeveloper] = []
+        for entry in entries:
+            if entry.id is None:
+                result.append(self._codeveloper(entry))
+                continue
+            codev = existing[entry.id]
+            codev.nationality, codev.name, codev.external_id = entry.nationality, entry.name, entry.external_id
+            result.append(codev)
+        project.codevelopers = result
+        return result, {"codevelopers": len(result), "codevelopers_removed": len(existing) - len(ids)}
+
+    @staticmethod
+    def _fill_payment(payment: ProjectPayment, entry: PaymentIn, codevelopers: list[ProjectCodeveloper]) -> None:
+        payment.paid_on = entry.paid_on
+        payment.description = entry.description
+        payment.amount_cents = entry.amount_cents
+        payment.my_share_cents = entry.my_share_cents
+        payment.fund_location = entry.fund_location
+        # Linked by object, not id, so co-developers added in this same request work too.
+        payment.payouts = [
+            PaymentPayout(codeveloper=codevelopers[p.codeveloper_index], amount_cents=p.amount_cents)
+            for p in entry.payouts
+        ]
+
+    def _payment(self, entry: PaymentIn, codevelopers: list[ProjectCodeveloper]) -> ProjectPayment:
+        payment = ProjectPayment()
+        self._fill_payment(payment, entry, codevelopers)
+        return payment
+
+    def _sync_payments(
+        self, project: Project, entries: list[PaymentIn], codevelopers: list[ProjectCodeveloper]
+    ) -> dict:
         """Make the payment history match `entries`: update by id, add new, delete the rest."""
         existing = {p.id: p for p in project.payments}
         ids = [e.id for e in entries if e.id is not None]
         if len(ids) != len(set(ids)) or not set(ids) <= existing.keys():
             raise ServiceError(422, "The payment history refers to payments that are not part of this project.")
         kept: list[ProjectPayment] = []
-        added = updated = 0
+        added = 0
         for entry in entries:
             if entry.id is None:
-                kept.append(self._payment(entry))
+                kept.append(self._payment(entry, codevelopers))
                 added += 1
                 continue
             payment = existing[entry.id]
-            if (payment.paid_on, payment.description, payment.amount_cents) != (
-                entry.paid_on, entry.description, entry.amount_cents
-            ):
-                payment.paid_on, payment.description, payment.amount_cents = (
-                    entry.paid_on, entry.description, entry.amount_cents
-                )
-                updated += 1
+            self._fill_payment(payment, entry, codevelopers)
             kept.append(payment)
-        removed = len(existing) - len(ids)
         project.payments = kept
-        return {"payments_added": added, "payments_updated": updated, "payments_removed": removed}
+        return {"payments": len(kept), "payments_added": added, "payments_removed": len(existing) - len(ids)}
 
     def _out(self, actor: User, project: Project) -> ProjectOut:
         def check(at, by) -> CheckOut | None:
             return None if at is None else CheckOut(at=at, by=(by.full_name or by.email) if by else None)
 
         payments = sorted(project.payments, key=lambda p: (p.paid_on, p.id or 0))
+
+        def payment_out(p: ProjectPayment) -> PaymentOut:
+            paid_out = sum(x.amount_cents for x in p.payouts)
+            return PaymentOut(
+                id=p.id, paid_on=p.paid_on, description=p.description, amount_cents=p.amount_cents,
+                my_share_cents=p.my_share_cents, fund_location=p.fund_location,
+                payouts=[
+                    PayoutOut(codeveloper_id=x.codeveloper.id, codeveloper_label=x.codeveloper.label,
+                              amount_cents=x.amount_cents)
+                    for x in p.payouts
+                ],
+                paid_out_cents=paid_out,
+                remaining_cents=p.amount_cents - p.my_share_cents - paid_out,
+            )
+
         return ProjectOut(
             id=project.id,
             title=project.title,
@@ -289,6 +350,7 @@ class ProjectService:
             total_budget_cents=project.total_budget_cents,
             monthly_budget_cents=project.monthly_budget_cents,
             paid_cents=sum(p.amount_cents for p in payments),
+            remaining_cents=sum(p.remaining_cents for p in payments),
             details=project.details,
             team_id=project.team_id,
             team_name=project.team.name if project.team else None,
@@ -296,10 +358,11 @@ class ProjectService:
             created_by_name=(project.created_by.full_name or project.created_by.email) if project.created_by else None,
             leader_check=check(project.leader_checked_at, project.leader_checked_by),
             owner_check=check(project.owner_checked_at, project.owner_checked_by),
-            payments=[
-                PaymentOut(id=p.id, paid_on=p.paid_on, description=p.description, amount_cents=p.amount_cents)
-                for p in payments
+            codevelopers=[
+                CodeveloperOut(id=c.id, nationality=c.nationality, name=c.name, external_id=c.external_id)
+                for c in project.codevelopers
             ],
+            payments=[payment_out(p) for p in payments],
             created_at=project.created_at,
             updated_at=project.updated_at,
             access=self._access(actor, project),
