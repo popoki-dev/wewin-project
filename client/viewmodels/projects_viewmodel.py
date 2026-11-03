@@ -191,7 +191,7 @@ class ProjectsViewModel(QObject):
         """Create (project_id 0) or update a project. Amounts are dollars as typed;
         `team_id` 0 means no team (the server files members' projects itself).
 
-        `codevelopers`: [{id, nationality, name, external_id}]. `payments`: [{id, paid_on,
+        `codevelopers`: [{id, nationality, name, external_id, contact}]. `payments`: [{id, paid_on,
         description, amount, my_share, fund_location, payouts: [{codeveloper_index, amount}]}],
         where `codeveloper_index` is a position in `codevelopers`."""
         problem, fields = "", []
@@ -263,6 +263,7 @@ class ProjectsViewModel(QObject):
             entry = {k: str(row.get(k, "")).strip() for k in ("nationality", "name", "external_id")}
             if not any(entry.values()):
                 return [], f"Co-developer {n}: enter a nationality, a name or an ID."
+            entry["contact"] = str(row.get("contact") or "").strip()  # optional
             if int(row.get("id") or 0) > 0:
                 entry["id"] = int(row["id"])
             result.append(entry)

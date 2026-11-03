@@ -299,6 +299,17 @@ def test_removing_a_codeveloper_removes_their_payouts(owner):
     assert out["codevelopers"] == [] and out["payments"][0]["payouts"] == []
 
 
+def test_codeveloper_contact_details_are_optional(owner):
+    p = create(owner, codevelopers=CODEVS)
+    assert [c["contact"] for c in p["codevelopers"]] == ["", ""]
+    aiko = {**p["codevelopers"][0], "contact": "  aiko@example.com, Telegram @aiko  "}
+    out = put(owner, Paths.project(p["id"]), body(codevelopers=[aiko])).json()
+    assert out["codevelopers"][0]["contact"] == "aiko@example.com, Telegram @aiko"
+    # A contact alone does not identify anyone, and it has a length limit.
+    for codev in ({"contact": "aiko@example.com"}, {"name": "Aiko", "contact": "x" * 301}):
+        assert owner.post(Paths.PROJECTS, body(codevelopers=[codev])).status_code == 422
+
+
 def test_codevelopers_of_another_project_are_refused(owner):
     a = create(owner, codevelopers=CODEVS)
     b = create(owner, title="Other")

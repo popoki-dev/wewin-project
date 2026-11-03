@@ -260,7 +260,9 @@ class ProjectService:
 
     @staticmethod
     def _codeveloper(entry: CodeveloperIn) -> ProjectCodeveloper:
-        return ProjectCodeveloper(nationality=entry.nationality, name=entry.name, external_id=entry.external_id)
+        return ProjectCodeveloper(
+            nationality=entry.nationality, name=entry.name, external_id=entry.external_id, contact=entry.contact
+        )
 
     def _sync_codevelopers(
         self, project: Project, entries: list[CodeveloperIn]
@@ -278,6 +280,7 @@ class ProjectService:
                 continue
             codev = existing[entry.id]
             codev.nationality, codev.name, codev.external_id = entry.nationality, entry.name, entry.external_id
+            codev.contact = entry.contact
             result.append(codev)
         project.codevelopers = result
         return result, {"codevelopers": len(result), "codevelopers_removed": len(existing) - len(ids)}
@@ -359,7 +362,9 @@ class ProjectService:
             leader_check=check(project.leader_checked_at, project.leader_checked_by),
             owner_check=check(project.owner_checked_at, project.owner_checked_by),
             codevelopers=[
-                CodeveloperOut(id=c.id, nationality=c.nationality, name=c.name, external_id=c.external_id)
+                CodeveloperOut(
+                    id=c.id, nationality=c.nationality, name=c.name, external_id=c.external_id, contact=c.contact
+                )
                 for c in project.codevelopers
             ],
             payments=[payment_out(p) for p in payments],

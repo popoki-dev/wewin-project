@@ -149,7 +149,7 @@ def test_hourly_projects_may_leave_the_total_blank(tmp_path, monkeypatch):
 
 
 
-CODEVS = [{"id": 0, "nationality": "Japan", "name": " Aiko ", "external_id": ""},
+CODEVS = [{"id": 0, "nationality": "Japan", "name": " Aiko ", "external_id": "", "contact": " aiko@example.com "},
           {"id": 7, "nationality": "", "name": "", "external_id": "ben#42"}]
 
 
@@ -165,8 +165,10 @@ def test_codevelopers_and_splits_are_sent(tmp_path, monkeypatch):
     vm, api = signed_in(tmp_path, monkeypatch)
     save(vm, codevelopers=CODEVS, payments=[split_row()])
     body = api.calls[0][1]
-    assert body["codevelopers"] == [{"nationality": "Japan", "name": "Aiko", "external_id": ""},
-                                    {"nationality": "", "name": "", "external_id": "ben#42", "id": 7}]
+    assert body["codevelopers"] == [
+        {"nationality": "Japan", "name": "Aiko", "external_id": "", "contact": "aiko@example.com"},
+        {"nationality": "", "name": "", "external_id": "ben#42", "contact": "", "id": 7},  # contact is optional
+    ]
     assert body["payments"][0] == {
         "paid_on": "2026-11-05", "description": "M1", "amount_cents": 100_000, "my_share_cents": 50_000,
         "fund_location": "Wise USD",
@@ -176,6 +178,7 @@ def test_codevelopers_and_splits_are_sent(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("kw", "field", "text"), [
     ({"codevelopers": [{"id": 0, "nationality": " ", "name": "", "external_id": ""}]}, "codevelopers", "Co-developer 1"),
+    ({"codevelopers": [{"id": 0, "contact": "a@b.c"}]}, "codevelopers", "Co-developer 1"),
     ({"payments": [split_row(my_share="900")]}, "payments", "more than the total"),
     ({"payments": [split_row(payouts=[{"codeveloper_index": -1, "amount": "5"}])]}, "payments", "choose the co-developer"),
     ({"payments": [split_row(payouts=[{"codeveloper_index": 0, "amount": "5"}, {"codeveloper_index": 0, "amount": "5"}])]},

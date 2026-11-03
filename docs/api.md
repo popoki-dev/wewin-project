@@ -228,7 +228,7 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 ```json
 {"title": "Website", "start_date": "2026-11-03", "end_date": null, "category": "fixed" | "hourly" | "milestone",
  "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented", "team_id": 2,
- "codevelopers": [{"nationality": "Japan", "name": "Aiko", "external_id": "aiko-dev"},
+ "codevelopers": [{"nationality": "Japan", "name": "Aiko", "external_id": "aiko-dev", "contact": "aiko@example.com"},
                   {"nationality": "", "name": "", "external_id": "ben#42"}],
  "payments": [{"paid_on": "2026-11-05", "description": "Milestone 1",
                "amount_cents": 100000, "my_share_cents": 50000, "fund_location": "Wise USD",
@@ -237,7 +237,7 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 ```
 → `201` with the project.
 
-- **Co-developers:** each needs at least one of `nationality`, `name` or `external_id` (their ID).
+- **Co-developers:** each needs at least one of `nationality`, `name` or `external_id` (their ID). `contact` is optional free text (email, phone, messenger handle; up to 300 characters) and doesn't count towards that rule.
 - **Payments:**
   - `amount_cents` is the **total received** and `my_share_cents` is **your portion** (default 0).
   - `fund_location` is free text saying where the money is kept.
@@ -251,7 +251,7 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 ### `GET /api/projects/{id}` 🔒 `projects.view`
 `200` with the project. The response includes:
 - `paid_cents` (total received) and `remaining_cents`;
-- `codevelopers` (`{"id", "nationality", "name", "external_id"}`);
+- `codevelopers` (`{"id", "nationality", "name", "external_id", "contact"}`);
 - `payments`, each with `my_share_cents`, `fund_location`, `payouts` (`{"codeveloper_id", "codeveloper_label", "amount_cents"}`), `paid_out_cents` and `remaining_cents`;
 - `leader_check` and `owner_check` (each `{"at", "by"}` or `null`);
 - `team_name` and `created_by_name`.
