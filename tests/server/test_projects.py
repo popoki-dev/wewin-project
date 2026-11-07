@@ -314,3 +314,77 @@ def test_codevelopers_of_another_project_are_refused(owner):
     a = create(owner, codevelopers=CODEVS)
     b = create(owner, title="Other")
     assert put(owner, Paths.project(b["id"]), body(codevelopers=[a["codevelopers"][0]])).status_code == 422
+
+
+# ---------------------------------------------------------- project owners
+def user_id(owner, email):
+    return member_by_email(owner, email)["id"]
+
+
+def option_emails(session):
+    r = session.get(Paths.PROJECT_OWNER_OPTIONS)
+    assert r.status_code == 200, r.text
+    return sorted(o["email"] for o in r.json())
+
+
+def test_project_owner_options_follow_the_role(client, owner, teams, leader, member):
+    add_member(owner, "olga@example.com", teams["Ops"])
+    add_member(owner, "nobody@example.com", None)
+    everyone = sorted(m["email"] for m in owner.get(Paths.MEMBERS).json())
+    assert option_emails(owner) == everyone  # the Owner: themselves and everyone else
+    assert option_emails(leader) == ["lead@example.com", "sam@example.com"]  # themselves and their team
+    assert option_emails(member) == ["sam@example.com"]
+
+
+def test_owner_designates_any_project_owner(owner, teams, leader, member):
+    add_member(owner, "olga@example.com", teams["Ops"])
+    mine = create(owner)
+    assert mine["project_owner_id"] == owner.user["id"]
+    assert mine["project_owner_name"] == (owner.user["full_name"] or owner.user["email"])
+    olga = user_id(owner, "olga@example.com")
+    p = create(owner, project_owner_id=olga, team_id=teams["Ops"])
+    assert p["project_owner_id"] == olga
+    # The designated member now sees and works on the project, which is theirs.
+    p = create(owner, title="Sam's", project_owner_id=user_id(owner, "sam@example.com"))
+    assert "Sam's" in titles(member)
+    assert put(member, Paths.project(p["id"]), body(title="Sam's v2")).status_code == 200
+    # Reassigning it to someone else takes it away from them.
+    put(owner, Paths.project(p["id"]), body(title="Sam's v2", project_owner_id=olga))
+    assert "Sam's v2" not in titles(member)
+
+
+def test_team_leader_designates_themselves_or_their_team(owner, teams, leader, member):
+    add_member(owner, "olga@example.com", teams["Ops"])
+    sam = user_id(owner, "sam@example.com")
+    assert create(leader)["project_owner_id"] == leader.user["id"]  # left out: themselves
+    p = create(leader, project_owner_id=sam)
+    assert p["project_owner_id"] == sam and "Website" in titles(member)
+    r = leader.post(Paths.PROJECTS, body(project_owner_id=user_id(owner, "olga@example.com")))
+    assert r.status_code == 403
+    assert leader.post(Paths.PROJECTS, body(project_owner_id=owner.user["id"])).status_code == 403
+
+
+def test_team_leader_may_keep_an_owner_they_could_not_pick(owner, teams, leader):
+    # The Owner files a Sales project for someone in Ops; the Sales leader can still edit it.
+    add_member(owner, "olga@example.com", teams["Ops"])
+    olga = user_id(owner, "olga@example.com")
+    p = create(owner, team_id=teams["Sales"], project_owner_id=olga)
+    r = put(leader, Paths.project(p["id"]), body(title="Edited", project_owner_id=olga))
+    assert r.status_code == 200 and r.json()["project_owner_id"] == olga
+    assert put(leader, Paths.project(p["id"]), body(title="Edited")).json()["project_owner_id"] == olga  # left out
+
+
+def test_members_always_own_their_projects(owner, member):
+    sam = member.user["id"]
+    assert create(member)["project_owner_id"] == sam
+    assert create(member, project_owner_id=sam)["project_owner_id"] == sam
+    assert member.post(Paths.PROJECTS, body(project_owner_id=owner.user["id"])).status_code == 403
+    p = create(member, title="Mine")
+    assert put(member, Paths.project(p["id"]), body(project_owner_id=owner.user["id"])).status_code == 403
+
+
+def test_deleting_the_project_owner_keeps_the_project(owner, member):
+    p = create(member)
+    assert delete(owner, Paths.member(member.user["id"])).status_code == 200
+    out = owner.get(Paths.project(p["id"])).json()
+    assert out["project_owner_id"] is None and out["project_owner_name"] is None

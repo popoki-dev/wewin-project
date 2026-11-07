@@ -14,6 +14,9 @@ class ProjectsApi:
     def list(self, server: str, token: str, callback: Callback) -> None:
         self._client.get(server, Paths.PROJECTS, callback, token)
 
+    def project_owner_options(self, server: str, token: str, callback: Callback) -> None:
+        self._client.get(server, Paths.PROJECT_OWNER_OPTIONS, callback, token)
+
     def create(self, server: str, token: str, body: dict, callback: Callback) -> None:
         self._client.post(server, Paths.PROJECTS, body, callback, token)
 

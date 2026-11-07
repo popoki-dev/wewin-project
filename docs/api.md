@@ -224,10 +224,14 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 ### `GET /api/projects` 🔒 `projects.view`
 `200` returns a list of projects, newest start date first.
 
+### `GET /api/projects/owner-options` 🔒 `projects.create` or `projects.edit`
+`200` returns who the caller may designate as project owner: `[{"id", "name", "email", "role", "team_id"}]`.
+The Owner gets everyone, a Team Leader gets themselves plus the members and co-leaders of the teams they lead, and a member gets only themselves.
+
 ### `POST /api/projects` 🔒 `projects.create`
 ```json
 {"title": "Website", "start_date": "2026-11-03", "end_date": null, "category": "fixed" | "hourly" | "milestone",
- "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented", "team_id": 2,
+ "total_budget_cents": 1200000, "monthly_budget_cents": null, "details": "Line 1\n  indented", "team_id": 2, "project_owner_id": 7,
  "codevelopers": [{"nationality": "Japan", "name": "Aiko", "external_id": "aiko-dev", "contact": "aiko@example.com"},
                   {"nationality": "", "name": "", "external_id": "ben#42"}],
  "payments": [{"paid_on": "2026-11-05", "description": "Milestone 1",
@@ -245,6 +249,7 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 - **Remaining:** your portion plus the payouts must not exceed the total received. The rest is returned as `remaining_cents`.
 
 - **Defaults:** `start_date` is today if omitted. `end_date` and `monthly_budget_cents` may be `null`. `total_budget_cents` is required, except for `hourly` projects, where it may be `null` (no overall budget).
+- **Project owner:** `project_owner_id` is the person responsible for the project. Leave it out and it's the caller. The Owner may pick anyone, and a Team Leader themselves or anyone on their teams (**403** otherwise). A member's projects are always their own, so they can't name anyone else (**403**). On update, keeping the current project owner is always allowed.
 - **Team:** the Owner picks any team, or none. A Team Leader picks one of their teams (it may be omitted if they lead exactly one). A member's project always goes to their own team.
 - **422** for a missing title, a missing total budget on a fixed or milestone project, a negative amount, a completion date before the start, a payment that isn't above zero, or an unknown category.
 
@@ -254,7 +259,7 @@ Each project in a response carries `access`: `{"edit", "delete", "check", "unche
 - `codevelopers` (`{"id", "nationality", "name", "external_id", "contact"}`);
 - `payments`, each with `my_share_cents`, `fund_location`, `payouts` (`{"codeveloper_id", "codeveloper_label", "amount_cents"}`), `paid_out_cents` and `remaining_cents`;
 - `leader_check` and `owner_check` (each `{"at", "by"}` or `null`);
-- `team_name` and `created_by_name`.
+- `team_name`, `created_by_name`, and `project_owner_id` / `project_owner_name` (`null` if that account was deleted).
 
 ### `PUT /api/projects/{id}` 🔒 `projects.edit`
 Same body as create, and it replaces the project. `codevelopers` and `payments` are the whole new lists:

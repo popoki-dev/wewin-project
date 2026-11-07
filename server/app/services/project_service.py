@@ -2,10 +2,14 @@
 
 Who may do what:
 - The Owner sees, adds, edits and deletes every project, and places the Owner check.
-- A Team Leader works on projects of the teams they lead (and their own), and places
+- A Team Leader works on projects of the teams they lead (and those they own), and places
   the Leader check on their teams' projects. An Owner check locks the project for them.
-- A member works on the projects they created. A Leader or Owner check locks it for them.
+- A member works on the projects they own. A Leader or Owner check locks it for them.
 Permissions (projects.*) gate each action on top of these scope rules.
+
+Every project has a project owner (the person responsible for it, not the Owner role):
+the Owner may designate anyone in the organization, a Team Leader themselves or anyone
+on the teams they lead, and a member's projects are always their own.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from ..models import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment,
 from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.team_repository import TeamRepository
+from ..repositories.user_repository import UserRepository
 from ..schemas.projects import (
     CheckOut,
     CodeveloperIn,
@@ -32,6 +37,7 @@ from ..schemas.projects import (
     ProjectAccess,
     ProjectIn,
     ProjectOut,
+    ProjectOwnerOption,
 )
 from .errors import ServiceError
 
@@ -52,6 +58,7 @@ class ProjectService:
         self.db = db
         self.projects = ProjectRepository(db)
         self.teams = TeamRepository(db)
+        self.users = UserRepository(db)
         self.audit = AuditRepository(db)
 
     # ----------------------------------------------------------------- scope
@@ -66,7 +73,7 @@ class ProjectService:
     def _can_see(self, actor: User, project: Project) -> bool:
         if project.organization_id != actor.organization_id:
             return False
-        return self._is_owner(actor) or self._leads(actor, project) or project.created_by_id == actor.id
+        return self._is_owner(actor) or self._leads(actor, project) or project.project_owner_id == actor.id
 
     def _lock_reason(self, actor: User, project: Project) -> str | None:
         """Why the actor may not change this project because of a check, if they may not."""
@@ -140,6 +147,32 @@ class ProjectService:
         # Members file projects under their own team; it cannot be changed.
         return actor.team_id if current is None else current
 
+    def _project_owner_candidates(self, actor: User) -> list[User]:
+        """Whom the actor may designate as a project owner: the Owner anyone, a Team Leader
+        themselves and the members and co-leaders of their teams, a member only themselves."""
+        if self._is_owner(actor):
+            users = self.users.list(actor.organization_id)
+        elif actor.role == Role.TEAM_LEADER:
+            users = self.users.list_in_teams(actor.organization_id, set(actor.led_team_ids))
+            if actor not in users:
+                users = [actor, *users]
+        else:
+            users = [actor]
+        return [u for u in users if u.is_active or u.id == actor.id]
+
+    def _resolve_project_owner(self, actor: User, requested: int | None, current: Project | None = None) -> User:
+        """The project owner to store. Keeping the current one is always allowed."""
+        if current is not None and requested in (None, current.project_owner_id) and current.project_owner:
+            return current.project_owner
+        if requested is None or requested == actor.id:
+            return actor
+        if actor.role == Role.MEMBER:
+            raise ServiceError(403, "Your projects are always your own; only the Owner or a Team Leader "
+                                    "can designate another project owner.")
+        if not any(u.id == requested for u in self._project_owner_candidates(actor)):
+            raise ServiceError(403, "You can only make yourself or a member of your teams the project owner.")
+        return self.users.get(requested)
+
     # ------------------------------------------------------------------ read
     def list(self, actor: User) -> list[ProjectOut]:
         if not actor.can(Permission.PROJECTS_VIEW):
@@ -147,10 +180,22 @@ class ProjectService:
         if self._is_owner(actor):
             projects = self.projects.list(actor.organization_id)
         elif actor.role == Role.TEAM_LEADER:
-            projects = self.projects.list(actor.organization_id, team_ids=set(actor.led_team_ids), created_by_id=actor.id)
+            projects = self.projects.list(
+                actor.organization_id, team_ids=set(actor.led_team_ids), project_owner_id=actor.id
+            )
         else:
-            projects = self.projects.list(actor.organization_id, created_by_id=actor.id)
+            projects = self.projects.list(actor.organization_id, project_owner_id=actor.id)
         return [self._out(actor, p) for p in projects]
+
+    def project_owner_options(self, actor: User) -> list[ProjectOwnerOption]:
+        if not (actor.can(Permission.PROJECTS_CREATE) or actor.can(Permission.PROJECTS_EDIT)):
+            raise ServiceError(403, NO_PERMISSION)
+        return [
+            ProjectOwnerOption(
+                id=u.id, name=u.full_name or u.email, email=u.email, role=u.role.value, team_id=u.team_id
+            )
+            for u in self._project_owner_candidates(actor)
+        ]
 
     def get(self, actor: User, project_id: int) -> ProjectOut:
         if not actor.can(Permission.PROJECTS_VIEW):
@@ -168,6 +213,7 @@ class ProjectService:
             team_id=self._resolve_team(actor, body.team_id),
             created_by_id=actor.id,
         )
+        project.project_owner = self._resolve_project_owner(actor, body.project_owner_id)
         self._apply(project, body)
         codevelopers = [self._codeveloper(c) for c in body.codevelopers]
         project.codevelopers = codevelopers
@@ -176,6 +222,7 @@ class ProjectService:
         self.audit.record(
             AuditAction.PROJECT_CREATED, client, user_id=actor.id, organization_id=actor.organization_id,
             project_id=project.id, title=project.title, team_id=project.team_id,
+            project_owner_id=project.project_owner_id,
         )
         self.db.commit()
         return self._out(actor, project)
@@ -185,12 +232,13 @@ class ProjectService:
         self._ensure_may_change(actor, project, Permission.PROJECTS_EDIT)
         project.team_id = self._resolve_team(actor, body.team_id, current=project.team_id)
         project.team = None if project.team_id is None else self.teams.get(project.team_id)
+        project.project_owner = self._resolve_project_owner(actor, body.project_owner_id, current=project)
         self._apply(project, body)
         codevelopers, codev_changes = self._sync_codevelopers(project, body.codevelopers)
         changes = {**codev_changes, **self._sync_payments(project, body.payments, codevelopers)}
         self.audit.record(
             AuditAction.PROJECT_UPDATED, client, user_id=actor.id, organization_id=actor.organization_id,
-            project_id=project.id, title=project.title, **changes,
+            project_id=project.id, title=project.title, project_owner_id=project.project_owner_id, **changes,
         )
         self.db.commit()
         return self._out(actor, project)
@@ -359,6 +407,10 @@ class ProjectService:
             team_name=project.team.name if project.team else None,
             created_by_id=project.created_by_id,
             created_by_name=(project.created_by.full_name or project.created_by.email) if project.created_by else None,
+            project_owner_id=project.project_owner_id,
+            project_owner_name=(
+                (project.project_owner.full_name or project.project_owner.email) if project.project_owner else None
+            ),
             leader_check=check(project.leader_checked_at, project.leader_checked_by),
             owner_check=check(project.owner_checked_at, project.owner_checked_by),
             codevelopers=[

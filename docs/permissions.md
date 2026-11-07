@@ -99,8 +99,9 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | Create, rename teams | | | ✓ |
 | Delete teams (members keep their accounts with no team; its Team Leaders become members) | | | ✓ |
 | Define role bundles | | | ✓ |
-| See projects | own | own teams' and own | all |
+| See projects ("own" = they are its project owner) | own | own teams' and own | all |
 | Add, edit, delete projects (incl. payment history) | own, until a Leader or Owner check | own teams' and own, until an Owner check | all, always |
+| Designate the project owner | always themselves | themselves or anyone on their teams | anyone |
 | Check projects (locks them for those below) | | own teams' (Leader check) | all (Owner check) |
 | *Planned:* view/edit revenue | | ✓ | ✓ |
 

@@ -14,17 +14,17 @@ class ProjectRepository:
         return self.db.get(Project, project_id)
 
     def list(
-        self, organization_id: int, *, team_ids: set[int] | None = None, created_by_id: int | None = None
+        self, organization_id: int, *, team_ids: set[int] | None = None, project_owner_id: int | None = None
     ) -> list[Project]:
-        """Every project of the organization, or only those in `team_ids` or created by
-        `created_by_id` (either matches) when one of them is given."""
+        """Every project of the organization, or only those in `team_ids` or owned by
+        `project_owner_id` (either matches) when one of them is given."""
         query = select(Project).where(Project.organization_id == organization_id)
         scope = []
         if team_ids:
             scope.append(Project.team_id.in_(team_ids))
-        if created_by_id is not None:
-            scope.append(Project.created_by_id == created_by_id)
-        if team_ids is not None or created_by_id is not None:
+        if project_owner_id is not None:
+            scope.append(Project.project_owner_id == project_owner_id)
+        if team_ids is not None or project_owner_id is not None:
             if not scope:
                 return []
             query = query.where(or_(*scope))
@@ -33,7 +33,8 @@ class ProjectRepository:
 
     def forget_user(self, user_id: int) -> None:
         """A deleted account: its projects and checks stay, without the link to it."""
-        for column in (Project.created_by_id, Project.leader_checked_by_id, Project.owner_checked_by_id):
+        for column in (Project.created_by_id, Project.project_owner_id, Project.leader_checked_by_id,
+                       Project.owner_checked_by_id):
             self.db.execute(
                 update(Project).where(column == user_id).values({column.key: None})
                 .execution_options(synchronize_session="fetch")

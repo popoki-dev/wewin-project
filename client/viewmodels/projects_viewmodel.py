@@ -59,6 +59,7 @@ class ProjectsViewModel(QObject):
         self._auth = auth
         self._api = api
         self._projects: list[dict] = []
+        self._owner_options: list[dict] = []
         self._busy = False
         self._error = ""
         self._error_fields: list[str] = []
@@ -69,6 +70,16 @@ class ProjectsViewModel(QObject):
     @Property("QVariantList", notify=changed)
     def projects(self) -> list[dict]:
         return self._projects
+
+    @Property("QVariantList", notify=changed)
+    def projectOwnerOptions(self) -> list[dict]:
+        """Whom the user may designate as project owner: [{id, name, email, role, team_id}]."""
+        return self._owner_options
+
+    @Property(bool, notify=stateChanged)
+    def canChooseProjectOwner(self) -> bool:
+        """Members' projects are always their own; the Owner and Team Leaders pick."""
+        return self._auth.userRole in ("owner", "team_leader")
 
     @Property("QVariantList", constant=True)
     def categories(self) -> list[dict]:
@@ -130,7 +141,8 @@ class ProjectsViewModel(QObject):
     @staticmethod
     def _fields_for(message: str) -> list[str]:
         text = message.lower()
-        for word, field in (("title", "title"), ("completion", "endDate"), ("start", "startDate"),
+        for word, field in (("project owner", "projectOwner"),
+                            ("title", "title"), ("completion", "endDate"), ("start", "startDate"),
                             ("team", "team"), ("payment", "payments"), ("budget", "totalBudget")):
             if word in text:
                 return [field]
@@ -139,6 +151,7 @@ class ProjectsViewModel(QObject):
     def _on_session_changed(self) -> None:
         if not self._auth.loggedIn:
             self._projects = []
+            self._owner_options = []
             self.changed.emit()
             self._set_state(False)
         else:
@@ -181,15 +194,23 @@ class ProjectsViewModel(QObject):
             self.changed.emit()
             self._set_busy(False)
 
-        self._api.list(self._auth.serverUrl, self._auth.access_token(), got)
+        def got_owners(result: ApiResult) -> None:
+            if result.ok:
+                self._owner_options = result.data.get("items", [])
+                self.changed.emit()
 
-    @Slot(int, str, str, str, str, str, str, str, int, "QVariantList", "QVariantList")
+        self._api.list(self._auth.serverUrl, self._auth.access_token(), got)
+        if self._auth.has("projects.create") or self._auth.has("projects.edit"):
+            self._api.project_owner_options(self._auth.serverUrl, self._auth.access_token(), got_owners)
+
+    @Slot(int, str, str, str, str, str, str, str, int, int, "QVariantList", "QVariantList")
     def saveProject(
-        self, project_id: int, title: str, start: str, end: str, category: str,
-        total_budget: str, monthly_budget: str, details: str, team_id: int, codevelopers: list, payments: list,
+        self, project_id: int, title: str, start: str, end: str, category: str, total_budget: str,
+        monthly_budget: str, details: str, team_id: int, project_owner_id: int, codevelopers: list, payments: list,
     ) -> None:
         """Create (project_id 0) or update a project. Amounts are dollars as typed;
-        `team_id` 0 means no team (the server files members' projects itself).
+        `team_id` 0 means no team (the server files members' projects itself), and
+        `project_owner_id` 0 means none chosen (members, whose projects are their own).
 
         `codevelopers`: [{id, nationality, name, external_id, contact}]. `payments`: [{id, paid_on,
         description, amount, my_share, fund_location, payouts: [{codeveloper_index, amount}]}],
@@ -215,6 +236,8 @@ class ProjectsViewModel(QObject):
                     problem, fields = "The completion date cannot be before the start date.", ["endDate"]
             except ValueError:
                 problem, fields = "Enter the completion date as YYYY-MM-DD, or leave it blank.", ["endDate"]
+        if not problem and project_owner_id <= 0 and self.canChooseProjectOwner:
+            problem, fields = "Choose the project owner.", ["projectOwner"]
         if not problem and category not in {c["value"] for c in _CATEGORIES}:
             problem, fields = "Choose a category.", ["category"]
         if not problem:
@@ -244,6 +267,8 @@ class ProjectsViewModel(QObject):
         body["category"] = category
         body["details"] = details  # exactly as typed: line breaks and spacing are content
         body["team_id"] = team_id if team_id > 0 else None
+        if project_owner_id > 0:
+            body["project_owner_id"] = project_owner_id
 
         def saved(project: dict) -> None:
             self.projectSaved.emit()

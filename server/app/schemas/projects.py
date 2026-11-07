@@ -83,6 +83,8 @@ class ProjectIn(BaseModel):
     # Kept exactly as entered (no trimming), so line breaks and spacing survive.
     details: str = Field(default="", max_length=DETAILS_MAX_LENGTH)
     team_id: int | None = None
+    # Who is responsible for the project. Left out, it is the caller (and members always are).
+    project_owner_id: int | None = None
     codevelopers: list[CodeveloperIn] = Field(default_factory=list, max_length=MAX_CODEVELOPERS)
     payments: list[PaymentIn] = Field(default_factory=list, max_length=MAX_PAYMENTS)
 
@@ -137,6 +139,16 @@ class PaymentOut(BaseModel):
     remaining_cents: int
 
 
+class ProjectOwnerOption(BaseModel):
+    """Someone the caller may designate as a project's owner."""
+
+    id: int
+    name: str
+    email: str
+    role: str
+    team_id: int | None
+
+
 class CheckOut(BaseModel):
     at: datetime
     by: str | None  # None if that account was deleted
@@ -166,6 +178,8 @@ class ProjectOut(BaseModel):
     team_name: str | None
     created_by_id: int | None
     created_by_name: str | None
+    project_owner_id: int | None  # None if that account was deleted
+    project_owner_name: str | None
     leader_check: CheckOut | None
     owner_check: CheckOut | None
     codevelopers: list[CodeveloperOut]

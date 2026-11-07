@@ -24,6 +24,7 @@ class FakeProjectsApi:
         cb(self.results.get(name, ApiResult(True, 200, {"items": [], "title": "P"})))
 
     def list(self, server, token, cb): self._answer("list", cb)
+    def project_owner_options(self, server, token, cb): self._answer("project_owner_options", cb)
     def create(self, server, token, body, cb): self._answer("create", cb, body)
     def update(self, server, token, project_id, body, cb): self._answer("update", cb, project_id, body)
     def delete(self, server, token, project_id, cb): self._answer("delete", cb, project_id)
@@ -50,7 +51,7 @@ DETAILS = "Line one\n\n  indented line\n\ttab"
 def save(vm, **kw):
     args = {"project_id": 0, "title": "Website", "start": "2026-11-01", "end": "", "category": "fixed",
             "total_budget": "12,000", "monthly_budget": "", "details": DETAILS, "team_id": 0,
-            "codevelopers": [], "payments": []}
+            "project_owner_id": 1, "codevelopers": [], "payments": []}
     args.update(kw)
     vm.saveProject(*args.values())
 
@@ -80,7 +81,7 @@ def test_save_sends_cents_and_details_untouched(tmp_path, monkeypatch):
     ])
     body = api.calls[0][1]
     assert body["total_budget_cents"] == 1_200_000 and body["monthly_budget_cents"] == 100_000
-    assert body["end_date"] is None and body["team_id"] is None
+    assert body["end_date"] is None and body["team_id"] is None and body["project_owner_id"] == 1
     assert body["details"] == DETAILS
     assert body["payments"] == [
         {"paid_on": "2026-11-05", "description": "Deposit", "amount_cents": 300_000, "my_share_cents": 0,
@@ -113,7 +114,7 @@ def test_update_and_refresh(tmp_path, monkeypatch):
     api.results["update"] = ApiResult(True, 200, {"title": "Website"})
     save(vm, project_id=4, team_id=2)
     assert api.calls[0][:2] == ("update", 4) and api.calls[0][2]["team_id"] == 2
-    assert saved and api.calls[-1][0] == "list" and "saved" in vm.notice
+    assert saved and [c[0] for c in api.calls[1:]] == ["list", "project_owner_options"] and "saved" in vm.notice
 
 
 def test_server_errors_point_at_fields(tmp_path, monkeypatch):
@@ -206,3 +207,35 @@ def test_fund_locations_are_suggested_most_used_first(tmp_path, monkeypatch):
     ]})
     vm.refresh()
     assert vm.fundLocations == ["Wise USD", "PayPal"]
+
+
+def test_project_owner_options_are_loaded(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    options = [{"id": 1, "name": "Owner", "email": "admin9531@gmail.com", "role": "owner", "team_id": None}]
+    api.results["project_owner_options"] = ApiResult(True, 200, {"items": options})
+    vm.refresh()
+    assert vm.projectOwnerOptions == options and vm.canChooseProjectOwner
+
+
+def test_owner_and_leaders_must_choose_a_project_owner(tmp_path, monkeypatch):
+    for role in ("owner", "team_leader"):
+        vm, api = signed_in(tmp_path / role, monkeypatch, role=role)
+        save(vm, project_id=0, project_owner_id=0)
+        assert vm.errorFields == ["projectOwner"] and api.calls == []
+        save(vm, project_owner_id=5)
+        assert api.calls[0][1]["project_owner_id"] == 5
+
+
+def test_members_do_not_send_a_project_owner(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, role="member")
+    assert not vm.canChooseProjectOwner
+    save(vm, project_owner_id=0)
+    assert "project_owner_id" not in api.calls[0][1]
+
+
+def test_project_owner_errors_point_at_the_picker(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch, role="team_leader")
+    message = "You can only make yourself or a member of your teams the project owner."
+    api.results["create"] = ApiResult(False, 403, {}, message)
+    save(vm)
+    assert vm.errorFields == ["projectOwner"]
