@@ -25,6 +25,10 @@ class Project(Base):
     created_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # The person responsible for the project (not the Owner role). Members' projects are theirs.
+    project_owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200))
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -47,6 +51,7 @@ class Project(Base):
 
     team: Mapped[Team | None] = relationship()
     created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id])
+    project_owner: Mapped[User | None] = relationship(foreign_keys=[project_owner_id])
     leader_checked_by: Mapped[User | None] = relationship(foreign_keys=[leader_checked_by_id])
     owner_checked_by: Mapped[User | None] = relationship(foreign_keys=[owner_checked_by_id])
     payments: Mapped[list[ProjectPayment]] = relationship(

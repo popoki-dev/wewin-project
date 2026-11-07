@@ -25,6 +25,7 @@ class Paths:
     MEMBERS = f"{API_PREFIX}/members"
     ROLE_BUNDLES = f"{API_PREFIX}/role-bundles"
     PROJECTS = f"{API_PREFIX}/projects"
+    PROJECT_OWNER_OPTIONS = f"{API_PREFIX}/projects/owner-options"
 
     @staticmethod
     def project(project_id: int) -> str:

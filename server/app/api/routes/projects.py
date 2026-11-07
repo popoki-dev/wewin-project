@@ -10,7 +10,7 @@ from ...database.session import get_db
 from ...models import User
 from ...repositories.audit_repository import ClientInfo
 from ...schemas.common import MessageResponse
-from ...schemas.projects import ProjectIn, ProjectOut
+from ...schemas.projects import ProjectIn, ProjectOut, ProjectOwnerOption
 from ...services.project_service import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -37,6 +37,15 @@ def create_project(
     projects: ProjectService = Depends(get_project_service),
 ) -> ProjectOut:
     return projects.create(user, body, client)
+
+
+@router.get("/owner-options", response_model=list[ProjectOwnerOption])
+def project_owner_options(
+    user: User = Depends(get_current_user),
+    projects: ProjectService = Depends(get_project_service),
+) -> list[ProjectOwnerOption]:
+    """Who the caller may designate as a project's owner."""
+    return projects.project_owner_options(user)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)

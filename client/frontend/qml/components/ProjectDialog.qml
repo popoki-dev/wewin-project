@@ -28,7 +28,7 @@ AppDialog {
         project = null
         fill({ title: "", start_date: ProjectsViewModel.today(), end_date: null, category: "fixed",
                total_budget_cents: null, monthly_budget_cents: null, details: "", team_id: null,
-               codevelopers: [], payments: [] })
+               project_owner_id: null, project_owner_name: null, codevelopers: [], payments: [] })
         open()
     }
     function openFor(p) {
@@ -49,6 +49,7 @@ AppDialog {
         teamBox.model = (AuthViewModel.isOwner ? [{ value: 0, text: qsTr("No team") }] : [])
             .concat(teams.map(t => ({ value: t.id, text: t.name })))
         teamBox.selectValue(p.team_id || (AuthViewModel.isOwner ? 0 : teams.length === 1 ? teams[0].id : -1))
+        fillProjectOwners(p)
         codevs = p.codevelopers.map(c => ({ id: c.id, nationality: c.nationality, name: c.name,
                                             external_id: c.external_id, contact: c.contact }))
         const position = {}
@@ -63,6 +64,36 @@ AppDialog {
         }))
         changed()
         ProjectsViewModel.clearMessages()
+    }
+    // The people the user may make project owner, plus the current owner if they are not
+    // among them (kept on save). New projects start with the user themselves.
+    function fillProjectOwners(p) {
+        const teamNames = {}
+        MembersViewModel.teams.forEach(t => teamNames[t.id] = t.name)
+        const options = ProjectsViewModel.projectOwnerOptions.map(o => ({
+            value: o.id, team_id: o.team_id,
+            text: o.email === AuthViewModel.userEmail ? qsTr("%1 (you)").arg(o.name)
+                  : o.team_id && teamNames[o.team_id] ? qsTr("%1 · %2").arg(o.name).arg(teamNames[o.team_id]) : o.name
+        }))
+        if (p.project_owner_id && !options.some(o => o.value === p.project_owner_id))
+            options.push({ value: p.project_owner_id, team_id: null, text: p.project_owner_name || "" })
+        if (!isNew && !p.project_owner_id)
+            options.unshift({ value: 0, team_id: null, text: qsTr("None (account deleted)") })
+        projectOwnerBox.model = options
+        if (isNew) {
+            const me = ProjectsViewModel.projectOwnerOptions.find(o => o.email === AuthViewModel.userEmail)
+            projectOwnerBox.selectValue(me ? me.id : -1)
+        } else {
+            projectOwnerBox.selectValue(p.project_owner_id || 0)
+        }
+    }
+    // Picking someone on a team the project may be filed under files it there too.
+    function projectOwnerPicked() {
+        const option = projectOwnerBox.model[projectOwnerBox.currentIndex]
+        if (option && option.team_id && teamBox.visible && teamBox.model.some(t => t.value === option.team_id))
+            teamBox.selectValue(option.team_id)
+        ProjectsViewModel.fieldEdited("projectOwner")
+        ProjectsViewModel.fieldEdited("team")
     }
     function codevLabel(c, i) {
         const parts = [c.name, c.external_id, c.nationality].filter(x => x && x.trim().length > 0)
@@ -149,6 +180,8 @@ AppDialog {
             categoryBox.currentValue !== undefined ? categoryBox.currentValue : "",
             totalField.text, monthlyField.text, detailsArea.text,
             teamBox.visible && teamBox.currentValue !== undefined ? teamBox.currentValue : 0,
+            ProjectsViewModel.canChooseProjectOwner && projectOwnerBox.currentValue !== undefined
+                ? projectOwnerBox.currentValue : 0,
             codevs, payments)
     }
     function lockReason() {
@@ -221,6 +254,16 @@ AppDialog {
                 invalid: ProjectsViewModel.errorFields.indexOf("endDate") >= 0
                 field.onTextEdited: ProjectsViewModel.fieldEdited("endDate")
             }
+        }
+
+        AppComboBox {
+            id: projectOwnerBox
+            Layout.fillWidth: true
+            label: qsTr("Project owner")
+            // Members' projects are always their own, so they only see who it is.
+            box.enabled: dialog.editable && ProjectsViewModel.canChooseProjectOwner
+            invalid: ProjectsViewModel.errorFields.indexOf("projectOwner") >= 0
+            onActivated: dialog.projectOwnerPicked()
         }
 
         RowLayout {

@@ -147,7 +147,10 @@ Item {
                                         elide: Text.ElideRight; Layout.fillWidth: true
                                     }
                                     Label {
-                                        text: (row.modelData.team_name || qsTr("No team")) + " · " + page.datesText(row.modelData)
+                                        text: [row.modelData.team_name || qsTr("No team"),
+                                               row.modelData.project_owner_name ? qsTr("Owner: %1").arg(row.modelData.project_owner_name)
+                                                                                : qsTr("No owner"),
+                                               page.datesText(row.modelData)].join(" · ")
                                         color: Theme.textMuted; font.pixelSize: 12
                                         elide: Text.ElideRight; Layout.fillWidth: true
                                     }
