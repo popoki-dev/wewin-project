@@ -61,7 +61,8 @@ class Project(Base):
 
 
 class ProjectCodeveloper(Base):
-    """Someone a project's income is shared with. At least one of the three fields is set."""
+    """Someone a project's income is shared with. At least one of nationality, name and
+    ID is set; contact details are optional."""
 
     __tablename__ = "project_codevelopers"
 
@@ -70,6 +71,7 @@ class ProjectCodeveloper(Base):
     nationality: Mapped[str] = mapped_column(String(100), default="")
     name: Mapped[str] = mapped_column(String(200), default="")
     external_id: Mapped[str] = mapped_column(String(100), default="")  # their ID, e.g. a platform username
+    contact: Mapped[str] = mapped_column(String(300), default="")  # optional free text: email, phone, chat handle
 
     @property
     def label(self) -> str:

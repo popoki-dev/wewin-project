@@ -11,7 +11,7 @@ AppDialog {
 
     property var project: null          // null: a new project
     property bool confirmingDelete: false
-    // Co-developer rows being edited: [{id, nationality, name, external_id}].
+    // Co-developer rows being edited: [{id, nationality, name, external_id, contact}].
     property var codevs: []
     // Payment rows being edited: [{id, paid_on, description, amount, my_share, fund_location,
     // payouts: [{codeveloper_index, amount}]}], amounts in dollars as typed. A payout names its
@@ -50,7 +50,7 @@ AppDialog {
             .concat(teams.map(t => ({ value: t.id, text: t.name })))
         teamBox.selectValue(p.team_id || (AuthViewModel.isOwner ? 0 : teams.length === 1 ? teams[0].id : -1))
         codevs = p.codevelopers.map(c => ({ id: c.id, nationality: c.nationality, name: c.name,
-                                            external_id: c.external_id }))
+                                            external_id: c.external_id, contact: c.contact }))
         const position = {}
         p.codevelopers.forEach((c, i) => position[c.id] = i)
         payments = p.payments.map(x => ({
@@ -87,7 +87,7 @@ AppDialog {
         ProjectsViewModel.fieldEdited("codevelopers")
     }
     function addCodev() {
-        codevs = codevs.concat([{ id: 0, nationality: "", name: "", external_id: "" }])
+        codevs = codevs.concat([{ id: 0, nationality: "", name: "", external_id: "", contact: "" }])
         changed()
     }
     function removeCodev(index) {
@@ -298,48 +298,63 @@ AppDialog {
             visible: dialog.codevs.length === 0
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: qsTr("No co-developers. Add the people this project's income is shared with (nationality, name or ID).")
+            text: qsTr("No co-developers. Add the people this project's income is shared with (nationality, name or ID, plus optional contact details).")
             color: Theme.textFaint
             font.pixelSize: 12
         }
         Repeater {
             model: dialog.codevs
-            delegate: RowLayout {
+            delegate: ColumnLayout {
                 id: codevRow
                 required property var modelData
                 required property int index
                 Layout.fillWidth: true
-                spacing: 8
-                AppTextField {
-                    Layout.preferredWidth: 150
-                    Layout.maximumWidth: 150
-                    placeholderText: qsTr("Nationality")
-                    text: codevRow.modelData.nationality
-                    field.readOnly: !dialog.editable
-                    field.maximumLength: 100
-                    field.onTextEdited: dialog.setCodev(codevRow.index, "nationality", text)
-                }
-                AppTextField {
+                spacing: 6
+                RowLayout {
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Name")
-                    text: codevRow.modelData.name
-                    field.readOnly: !dialog.editable
-                    field.maximumLength: 200
-                    field.onTextEdited: dialog.setCodev(codevRow.index, "name", text)
+                    spacing: 8
+                    AppTextField {
+                        Layout.preferredWidth: 150
+                        Layout.maximumWidth: 150
+                        placeholderText: qsTr("Nationality")
+                        text: codevRow.modelData.nationality
+                        field.readOnly: !dialog.editable
+                        field.maximumLength: 100
+                        field.onTextEdited: dialog.setCodev(codevRow.index, "nationality", text)
+                    }
+                    AppTextField {
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Name")
+                        text: codevRow.modelData.name
+                        field.readOnly: !dialog.editable
+                        field.maximumLength: 200
+                        field.onTextEdited: dialog.setCodev(codevRow.index, "name", text)
+                    }
+                    AppTextField {
+                        Layout.preferredWidth: 160
+                        Layout.maximumWidth: 160
+                        placeholderText: qsTr("ID")
+                        text: codevRow.modelData.external_id
+                        field.readOnly: !dialog.editable
+                        field.maximumLength: 100
+                        field.onTextEdited: dialog.setCodev(codevRow.index, "external_id", text)
+                    }
+                    RemoveButton {
+                        visible: dialog.editable
+                        label: qsTr("Remove co-developer (and their payouts)")
+                        onClicked: dialog.removeCodev(codevRow.index)
+                    }
                 }
                 AppTextField {
-                    Layout.preferredWidth: 160
-                    Layout.maximumWidth: 160
-                    placeholderText: qsTr("ID")
-                    text: codevRow.modelData.external_id
+                    // Optional, so it does not count towards the nationality / name / ID rule.
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 4
+                    placeholderText: qsTr("Contact (optional): email, phone, messenger…")
+                    text: codevRow.modelData.contact
+                    visible: dialog.editable || text.length > 0
                     field.readOnly: !dialog.editable
-                    field.maximumLength: 100
-                    field.onTextEdited: dialog.setCodev(codevRow.index, "external_id", text)
-                }
-                RemoveButton {
-                    visible: dialog.editable
-                    label: qsTr("Remove co-developer (and their payouts)")
-                    onClicked: dialog.removeCodev(codevRow.index)
+                    field.maximumLength: 300
+                    field.onTextEdited: dialog.setCodev(codevRow.index, "contact", text)
                 }
             }
         }

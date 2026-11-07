@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from shared.projects import (
+    CODEVELOPER_CONTACT_MAX_LENGTH,
     CODEVELOPER_ID_MAX_LENGTH,
     CODEVELOPER_NAME_MAX_LENGTH,
     CODEVELOPER_NATIONALITY_MAX_LENGTH,
@@ -30,8 +31,9 @@ class CodeveloperIn(BaseModel):
     nationality: str = Field(default="", max_length=CODEVELOPER_NATIONALITY_MAX_LENGTH)
     name: str = Field(default="", max_length=CODEVELOPER_NAME_MAX_LENGTH)
     external_id: str = Field(default="", max_length=CODEVELOPER_ID_MAX_LENGTH)
+    contact: str = Field(default="", max_length=CODEVELOPER_CONTACT_MAX_LENGTH)
 
-    @field_validator("nationality", "name", "external_id")
+    @field_validator("nationality", "name", "external_id", "contact")
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip()
@@ -114,6 +116,7 @@ class CodeveloperOut(BaseModel):
     nationality: str
     name: str
     external_id: str
+    contact: str
 
 
 class PayoutOut(BaseModel):
