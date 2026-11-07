@@ -388,3 +388,45 @@ def test_deleting_the_project_owner_keeps_the_project(owner, member):
     assert delete(owner, Paths.member(member.user["id"])).status_code == 200
     out = owner.get(Paths.project(p["id"])).json()
     assert out["project_owner_id"] is None and out["project_owner_name"] is None
+
+
+# ---------------------------------------------------- expected monthly revenue
+def test_expected_monthly_revenue(owner):
+    forecasts = [{"year": 2027, "month": 1, "amount_cents": 250_000},
+                 {"year": 2026, "month": 12, "amount_cents": 200_000}]
+    p = create(owner, revenue_forecasts=forecasts)
+    assert [(f["year"], f["month"], f["amount_cents"]) for f in p["revenue_forecasts"]] == [
+        (2026, 12, 200_000), (2027, 1, 250_000),  # by year and month
+    ]
+    assert p["expected_cents"] == 450_000
+    # Edit a month, drop another and add a new one, all in one save.
+    edited = [{"year": 2026, "month": 12, "amount_cents": 220_000}, {"year": 2027, "month": 2, "amount_cents": 0}]
+    out = put(owner, Paths.project(p["id"]), body(revenue_forecasts=edited)).json()
+    assert [(f["year"], f["month"], f["amount_cents"]) for f in out["revenue_forecasts"]] == [
+        (2026, 12, 220_000), (2027, 2, 0),
+    ]
+    assert out["expected_cents"] == 220_000
+    # Leaving the list out clears it, like the payment history.
+    assert put(owner, Paths.project(p["id"]), body()).json()["revenue_forecasts"] == []
+
+
+@pytest.mark.parametrize(
+    "forecasts",
+    [
+        [{"year": 2026, "month": 13, "amount_cents": 1}],
+        [{"year": 2026, "month": 0, "amount_cents": 1}],
+        [{"year": 1999, "month": 5, "amount_cents": 1}],
+        [{"year": 2026, "month": 5, "amount_cents": -1}],
+        [{"year": 2026, "month": 5, "amount_cents": 1}, {"year": 2026, "month": 5, "amount_cents": 2}],  # twice
+    ],
+)
+def test_invalid_expected_revenue_is_rejected(owner, forecasts):
+    assert owner.post(Paths.PROJECTS, body(revenue_forecasts=forecasts)).status_code == 422
+
+
+def test_members_enter_expected_revenue_until_checked(owner, leader, member):
+    p = create(member, revenue_forecasts=[{"year": 2026, "month": 12, "amount_cents": 100}])
+    assert p["expected_cents"] == 100
+    assert check(leader, p["id"]).status_code == 200
+    r = put(member, Paths.project(p["id"]), body(revenue_forecasts=[]))
+    assert r.status_code == 409

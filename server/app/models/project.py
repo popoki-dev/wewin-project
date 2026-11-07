@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Date, ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import AwareDateTime, Base, utcnow
@@ -63,6 +63,11 @@ class Project(Base):
     codevelopers: Mapped[list[ProjectCodeveloper]] = relationship(
         cascade="all, delete-orphan", lazy="selectin", order_by="ProjectCodeveloper.id"
     )
+    revenue_forecasts: Mapped[list[ProjectRevenueForecast]] = relationship(
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="(ProjectRevenueForecast.year, ProjectRevenueForecast.month)",
+    )
 
 
 class ProjectCodeveloper(Base):
@@ -120,3 +125,16 @@ class PaymentPayout(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger)
 
     codeveloper: Mapped[ProjectCodeveloper] = relationship(lazy="selectin")
+
+
+class ProjectRevenueForecast(Base):
+    """The revenue a project is expected to bring in one calendar month (whole US cents)."""
+
+    __tablename__ = "project_revenue_forecasts"
+    __table_args__ = (UniqueConstraint("project_id", "year", "month"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    year: Mapped[int] = mapped_column(SmallInteger)
+    month: Mapped[int] = mapped_column(SmallInteger)  # 1-12
+    amount_cents: Mapped[int] = mapped_column(BigInteger)

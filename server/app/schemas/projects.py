@@ -10,10 +10,13 @@ from shared.projects import (
     CODEVELOPER_NAME_MAX_LENGTH,
     CODEVELOPER_NATIONALITY_MAX_LENGTH,
     DETAILS_MAX_LENGTH,
+    FORECAST_MAX_YEAR,
+    FORECAST_MIN_YEAR,
     FUND_LOCATION_MAX_LENGTH,
     MAX_AMOUNT_CENTS,
     MAX_CODEVELOPERS,
     MAX_PAYMENTS,
+    MAX_REVENUE_FORECASTS,
     PAYMENT_DESCRIPTION_MAX_LENGTH,
     TITLE_MAX_LENGTH,
     ProjectCategory,
@@ -70,6 +73,14 @@ class PaymentIn(BaseModel):
         return v.strip()
 
 
+class RevenueForecastIn(BaseModel):
+    """The revenue expected in one month."""
+
+    year: int = Field(ge=FORECAST_MIN_YEAR, le=FORECAST_MAX_YEAR)
+    month: int = Field(ge=1, le=12)
+    amount_cents: int = Field(ge=0, le=MAX_AMOUNT_CENTS)
+
+
 class ProjectIn(BaseModel):
     """A whole project: create sends it, update replaces it (including the payment list)."""
 
@@ -87,6 +98,8 @@ class ProjectIn(BaseModel):
     project_owner_id: int | None = None
     codevelopers: list[CodeveloperIn] = Field(default_factory=list, max_length=MAX_CODEVELOPERS)
     payments: list[PaymentIn] = Field(default_factory=list, max_length=MAX_PAYMENTS)
+    # Expected monthly revenue; the whole list is replaced on update.
+    revenue_forecasts: list[RevenueForecastIn] = Field(default_factory=list, max_length=MAX_REVENUE_FORECASTS)
 
     @field_validator("title")
     @classmethod
@@ -102,6 +115,10 @@ class ProjectIn(BaseModel):
             raise ValueError("The completion date cannot be before the start date.")
         if self.total_budget_cents is None and self.category != ProjectCategory.HOURLY:
             raise ValueError("Enter the total budget (only hourly projects may leave it blank).")
+        months = [(f.year, f.month) for f in self.revenue_forecasts]
+        if len(months) != len(set(months)):
+            year, month = next(m for m in months if months.count(m) > 1)
+            raise ValueError(f"Expected revenue for {year}-{month:02d} is entered more than once.")
         for n, payment in enumerate(self.payments, start=1):
             indexes = [p.codeveloper_index for p in payment.payouts]
             if any(i >= len(self.codevelopers) for i in indexes):
@@ -149,6 +166,12 @@ class ProjectOwnerOption(BaseModel):
     team_id: int | None
 
 
+class RevenueForecastOut(BaseModel):
+    year: int
+    month: int
+    amount_cents: int
+
+
 class CheckOut(BaseModel):
     at: datetime
     by: str | None  # None if that account was deleted
@@ -184,6 +207,8 @@ class ProjectOut(BaseModel):
     owner_check: CheckOut | None
     codevelopers: list[CodeveloperOut]
     payments: list[PaymentOut]
+    revenue_forecasts: list[RevenueForecastOut]  # by year and month
+    expected_cents: int  # their total
     created_at: datetime
     updated_at: datetime
     access: ProjectAccess

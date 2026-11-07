@@ -8,9 +8,19 @@ from PySide6.QtCore import Property, QObject, Signal, Slot
 from client.api.client import ApiResult
 from client.api.projects_api import ProjectsApi
 from client.viewmodels.auth_viewmodel import AuthViewModel
-from shared.projects import CATEGORY_LABELS, DETAILS_MAX_LENGTH, MAX_AMOUNT_CENTS, TITLE_MAX_LENGTH
+from shared.projects import (
+    CATEGORY_LABELS,
+    DETAILS_MAX_LENGTH,
+    FORECAST_MAX_YEAR,
+    FORECAST_MIN_YEAR,
+    MAX_AMOUNT_CENTS,
+    TITLE_MAX_LENGTH,
+)
 
 _CATEGORIES = [{"value": c.value, "text": label} for c, label in CATEGORY_LABELS.items()]
+_MONTHS = [{"value": n, "text": name} for n, name in enumerate(
+    ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+     "November", "December"], start=1)]
 
 
 def parse_money(text: str) -> int | None:
@@ -113,6 +123,10 @@ class ProjectsViewModel(QObject):
     def detailsMaxLength(self) -> int:
         return DETAILS_MAX_LENGTH
 
+    @Property("QVariantList", constant=True)
+    def months(self) -> list[dict]:
+        return _MONTHS
+
     # ---------------------------------------------------------------- helpers
     def _set_state(self, busy: bool, error: str = "", fields: list[str] | None = None, notice: str = "") -> None:
         self._busy = busy
@@ -141,7 +155,7 @@ class ProjectsViewModel(QObject):
     @staticmethod
     def _fields_for(message: str) -> list[str]:
         text = message.lower()
-        for word, field in (("project owner", "projectOwner"),
+        for word, field in (("project owner", "projectOwner"), ("expected revenue", "forecasts"),
                             ("title", "title"), ("completion", "endDate"), ("start", "startDate"),
                             ("team", "team"), ("payment", "payments"), ("budget", "totalBudget")):
             if word in text:
@@ -203,10 +217,11 @@ class ProjectsViewModel(QObject):
         if self._auth.has("projects.create") or self._auth.has("projects.edit"):
             self._api.project_owner_options(self._auth.serverUrl, self._auth.access_token(), got_owners)
 
-    @Slot(int, str, str, str, str, str, str, str, int, int, "QVariantList", "QVariantList")
+    @Slot(int, str, str, str, str, str, str, str, int, int, "QVariantList", "QVariantList", "QVariantList")
     def saveProject(
         self, project_id: int, title: str, start: str, end: str, category: str, total_budget: str,
         monthly_budget: str, details: str, team_id: int, project_owner_id: int, codevelopers: list, payments: list,
+        forecasts: list,
     ) -> None:
         """Create (project_id 0) or update a project. Amounts are dollars as typed;
         `team_id` 0 means no team (the server files members' projects itself), and
@@ -214,7 +229,8 @@ class ProjectsViewModel(QObject):
 
         `codevelopers`: [{id, nationality, name, external_id, contact}]. `payments`: [{id, paid_on,
         description, amount, my_share, fund_location, payouts: [{codeveloper_index, amount}]}],
-        where `codeveloper_index` is a position in `codevelopers`."""
+        where `codeveloper_index` is a position in `codevelopers`. `forecasts`: [{year, month,
+        amount}], the expected revenue per month."""
         problem, fields = "", []
         body: dict = {}
         try:
@@ -260,6 +276,10 @@ class ProjectsViewModel(QObject):
             body["payments"], problem = self._payments_body(payments, len(body["codevelopers"]))
             if problem:
                 fields = ["payments"]
+        if not problem:
+            body["revenue_forecasts"], problem = self._forecasts_body(forecasts)
+            if problem:
+                fields = ["forecasts"]
         if problem:
             self._set_state(False, problem, fields)
             return
@@ -355,6 +375,44 @@ class ProjectsViewModel(QObject):
                 entry["id"] = int(row["id"])
             result.append(entry)
         return result, ""
+
+    @staticmethod
+    def _forecasts_body(rows: list) -> tuple[list[dict], str]:
+        """Expected-revenue rows from the dialog for the API (see saveProject)."""
+        result, seen = [], set()
+        for n, row in enumerate(rows, start=1):
+            row = dict(row)
+            try:
+                year = int(str(row.get("year", "")).strip())
+            except ValueError:
+                year = 0
+            if not FORECAST_MIN_YEAR <= year <= FORECAST_MAX_YEAR:
+                return [], f"Expected revenue {n}: enter a year between {FORECAST_MIN_YEAR} and {FORECAST_MAX_YEAR}."
+            month = int(row.get("month") or 0)
+            if not 1 <= month <= 12:
+                return [], f"Expected revenue {n}: choose the month."
+            if (year, month) in seen:
+                return [], f"Expected revenue {n}: {_MONTHS[month - 1]['text']} {year} is entered more than once."
+            seen.add((year, month))
+            try:
+                amount = parse_money(str(row.get("amount", "")))
+            except ValueError:
+                amount = -1
+            if amount is None or amount < 0:
+                return [], f"Expected revenue {n}: enter the expected amount in dollars, e.g. 2500."
+            result.append({"year": year, "month": month, "amount_cents": amount})
+        return result, ""
+
+    @Slot("QVariantList", result=str)
+    def expectedTotal(self, rows: list) -> str:
+        """The total of the expected-revenue rows as typed ("" while none is a valid amount)."""
+        cents = 0
+        for row in rows:
+            try:
+                cents += parse_money(str(dict(row).get("amount", ""))) or 0
+            except ValueError:
+                pass
+        return format_money(cents) if rows else ""
 
     @Slot("QVariant", result="QVariant")
     def paymentRemaining(self, row) -> dict:

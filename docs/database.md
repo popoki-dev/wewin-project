@@ -13,6 +13,7 @@ PostgreSQL 16, accessed through SQLAlchemy 2.0 with the psycopg 3 driver. Alembi
 | `projects` | Projects | `organization_id`, `team_id` (`SET NULL`), `created_by_id` (`SET NULL`), `project_owner_id` (`SET NULL`; the person responsible, not the Owner role), `title`, `start_date`, `end_date` (nullable), `category` (`fixed`/`hourly`/`milestone`), `total_budget_cents` (nullable for hourly projects only), `monthly_budget_cents` (nullable; amounts in US cents), `details` (TEXT, stored verbatim), `leader_checked_at`/`_by_id`, `owner_checked_at`/`_by_id` |
 | `project_codevelopers` | People a project's income is shared with | `project_id` (`CASCADE`), `nationality`, `name`, `external_id` (at least one is set), `contact` (optional free text) |
 | `project_payments` | A project's payment history | `project_id` (`CASCADE`), `paid_on`, `description`, `amount_cents` (total received), `my_share_cents`, `fund_location`. Remaining = total − my share − payouts, computed, not stored. |
+| `project_revenue_forecasts` | Expected monthly revenue | `project_id` (`CASCADE`), `year`, `month` (1–12), `amount_cents`; unique per project and month |
 | `payment_payouts` | What a payment paid each co-developer | `payment_id`, `codeveloper_id` (both `CASCADE`), `amount_cents` |
 | `role_bundles` | Named permission sets defined by the Owner | `organization_id`, `name` (unique per organization), `description`, `permissions` (JSON list of `shared/permissions.py` values) |
 | `user_role_bundles` | Which bundles each user holds | `user_id`, `bundle_id` (both `CASCADE`) |

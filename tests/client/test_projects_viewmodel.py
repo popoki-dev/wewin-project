@@ -51,7 +51,7 @@ DETAILS = "Line one\n\n  indented line\n\ttab"
 def save(vm, **kw):
     args = {"project_id": 0, "title": "Website", "start": "2026-11-01", "end": "", "category": "fixed",
             "total_budget": "12,000", "monthly_budget": "", "details": DETAILS, "team_id": 0,
-            "project_owner_id": 1, "codevelopers": [], "payments": []}
+            "project_owner_id": 1, "codevelopers": [], "payments": [], "forecasts": []}
     args.update(kw)
     vm.saveProject(*args.values())
 
@@ -239,3 +239,30 @@ def test_project_owner_errors_point_at_the_picker(tmp_path, monkeypatch):
     api.results["create"] = ApiResult(False, 403, {}, message)
     save(vm)
     assert vm.errorFields == ["projectOwner"]
+
+
+def test_expected_revenue_is_sent_in_cents(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    save(vm, forecasts=[{"year": "2026", "month": 12, "amount": "2,500"}, {"year": " 2027 ", "month": 1, "amount": "0"}])
+    assert api.calls[0][1]["revenue_forecasts"] == [
+        {"year": 2026, "month": 12, "amount_cents": 250_000}, {"year": 2027, "month": 1, "amount_cents": 0},
+    ]
+
+
+@pytest.mark.parametrize(("rows", "text"), [
+    ([{"year": "26", "month": 1, "amount": "5"}], "year between"),
+    ([{"year": "2026", "month": 0, "amount": "5"}], "choose the month"),
+    ([{"year": "2026", "month": 3, "amount": ""}], "expected amount"),
+    ([{"year": "2026", "month": 3, "amount": "lots"}], "expected amount"),
+    ([{"year": "2026", "month": 3, "amount": "1"}, {"year": "2026", "month": 3, "amount": "2"}], "March 2026"),
+])
+def test_expected_revenue_validation(tmp_path, monkeypatch, rows, text):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    save(vm, forecasts=rows)
+    assert vm.errorFields == ["forecasts"] and text in vm.errorMessage and api.calls == []
+
+
+def test_expected_total(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch)
+    assert vm.expectedTotal([{"amount": "1,000"}, {"amount": "250.50"}, {"amount": "x"}]) == "$1,250.50"
+    assert vm.expectedTotal([]) == ""

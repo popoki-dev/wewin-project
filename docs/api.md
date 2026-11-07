@@ -237,7 +237,8 @@ The Owner gets everyone, a Team Leader gets themselves plus the members and co-l
  "payments": [{"paid_on": "2026-11-05", "description": "Milestone 1",
                "amount_cents": 100000, "my_share_cents": 50000, "fund_location": "Wise USD",
                "payouts": [{"codeveloper_index": 0, "amount_cents": 30000},
-                           {"codeveloper_index": 1, "amount_cents": 15000}]}]}
+                           {"codeveloper_index": 1, "amount_cents": 15000}]}],
+ "revenue_forecasts": [{"year": 2026, "month": 12, "amount_cents": 250000}]}
 ```
 → `201` with the project.
 
@@ -246,6 +247,7 @@ The Owner gets everyone, a Team Leader gets themselves plus the members and co-l
   - `amount_cents` is the **total received** and `my_share_cents` is **your portion** (default 0).
   - `fund_location` is free text saying where the money is kept.
   - Each payout names a co-developer by **position** in `codevelopers` (`codeveloper_index`), so a co-developer added in the same request can be paid. Each co-developer can be paid at most once per payment.
+- **Expected monthly revenue:** `revenue_forecasts` lists the revenue expected per calendar month (`year` 2000–2100, `month` 1–12, `amount_cents` ≥ 0). Each month may appear once. Like the payment history, the list sent on update replaces the stored one.
 - **Remaining:** your portion plus the payouts must not exceed the total received. The rest is returned as `remaining_cents`.
 
 - **Defaults:** `start_date` is today if omitted. `end_date` and `monthly_budget_cents` may be `null`. `total_budget_cents` is required, except for `hourly` projects, where it may be `null` (no overall budget).
@@ -258,6 +260,7 @@ The Owner gets everyone, a Team Leader gets themselves plus the members and co-l
 - `paid_cents` (total received) and `remaining_cents`;
 - `codevelopers` (`{"id", "nationality", "name", "external_id", "contact"}`);
 - `payments`, each with `my_share_cents`, `fund_location`, `payouts` (`{"codeveloper_id", "codeveloper_label", "amount_cents"}`), `paid_out_cents` and `remaining_cents`;
+- `revenue_forecasts` (`{"year", "month", "amount_cents"}`, by year and month) and their total `expected_cents`;
 - `leader_check` and `owner_check` (each `{"at", "by"}` or `null`);
 - `team_name`, `created_by_name`, and `project_owner_id` / `project_owner_name` (`null` if that account was deleted).
 

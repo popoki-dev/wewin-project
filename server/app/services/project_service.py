@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from shared.enums import AuditAction, Role
 from shared.permissions import Permission
 
-from ..models import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment, User
+from ..models import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment, ProjectRevenueForecast, User
 from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.team_repository import TeamRepository
@@ -38,6 +38,8 @@ from ..schemas.projects import (
     ProjectIn,
     ProjectOut,
     ProjectOwnerOption,
+    RevenueForecastIn,
+    RevenueForecastOut,
 )
 from .errors import ServiceError
 
@@ -218,6 +220,7 @@ class ProjectService:
         codevelopers = [self._codeveloper(c) for c in body.codevelopers]
         project.codevelopers = codevelopers
         project.payments = [self._payment(p, codevelopers) for p in body.payments]
+        self._sync_forecasts(project, body.revenue_forecasts)
         self.projects.add(project)
         self.audit.record(
             AuditAction.PROJECT_CREATED, client, user_id=actor.id, organization_id=actor.organization_id,
@@ -236,6 +239,7 @@ class ProjectService:
         self._apply(project, body)
         codevelopers, codev_changes = self._sync_codevelopers(project, body.codevelopers)
         changes = {**codev_changes, **self._sync_payments(project, body.payments, codevelopers)}
+        changes["revenue_forecasts"] = self._sync_forecasts(project, body.revenue_forecasts)
         self.audit.record(
             AuditAction.PROJECT_UPDATED, client, user_id=actor.id, organization_id=actor.organization_id,
             project_id=project.id, title=project.title, project_owner_id=project.project_owner_id, **changes,
@@ -372,6 +376,21 @@ class ProjectService:
         project.payments = kept
         return {"payments": len(kept), "payments_added": added, "payments_removed": len(existing) - len(ids)}
 
+    @staticmethod
+    def _sync_forecasts(project: Project, entries: list[RevenueForecastIn]) -> int:
+        """Make the expected monthly revenue match `entries`, matched by year and month
+        (a month keeps its row, so the unique constraint never sees a delete-then-insert)."""
+        existing = {(f.year, f.month): f for f in project.revenue_forecasts}
+        kept: list[ProjectRevenueForecast] = []
+        for entry in entries:
+            forecast = existing.get((entry.year, entry.month)) or ProjectRevenueForecast(
+                year=entry.year, month=entry.month
+            )
+            forecast.amount_cents = entry.amount_cents
+            kept.append(forecast)
+        project.revenue_forecasts = sorted(kept, key=lambda f: (f.year, f.month))
+        return len(kept)
+
     def _out(self, actor: User, project: Project) -> ProjectOut:
         def check(at, by) -> CheckOut | None:
             return None if at is None else CheckOut(at=at, by=(by.full_name or by.email) if by else None)
@@ -420,6 +439,11 @@ class ProjectService:
                 for c in project.codevelopers
             ],
             payments=[payment_out(p) for p in payments],
+            revenue_forecasts=[
+                RevenueForecastOut(year=f.year, month=f.month, amount_cents=f.amount_cents)
+                for f in project.revenue_forecasts
+            ],
+            expected_cents=sum(f.amount_cents for f in project.revenue_forecasts),
             created_at=project.created_at,
             updated_at=project.updated_at,
             access=self._access(actor, project),

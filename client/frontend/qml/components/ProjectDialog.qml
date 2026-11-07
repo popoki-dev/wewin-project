@@ -17,6 +17,8 @@ AppDialog {
     // payouts: [{codeveloper_index, amount}]}], amounts in dollars as typed. A payout names its
     // co-developer by position in `codevs`.
     property var payments: []
+    // Expected revenue rows being edited: [{year, month, amount}], year and amount as typed.
+    property var forecasts: []
     property string paidText: ""
     // Bumped on every edit, so bindings that read the (unnotified) rows re-evaluate.
     property int tick: 0
@@ -28,7 +30,8 @@ AppDialog {
         project = null
         fill({ title: "", start_date: ProjectsViewModel.today(), end_date: null, category: "fixed",
                total_budget_cents: null, monthly_budget_cents: null, details: "", team_id: null,
-               project_owner_id: null, project_owner_name: null, codevelopers: [], payments: [] })
+               project_owner_id: null, project_owner_name: null, codevelopers: [], payments: [],
+               revenue_forecasts: [] })
         open()
     }
     function openFor(p) {
@@ -62,6 +65,8 @@ AppDialog {
             payouts: x.payouts.map(o => ({ codeveloper_index: position[o.codeveloper_id],
                                            amount: ProjectsViewModel.moneyInput(o.amount_cents) }))
         }))
+        forecasts = p.revenue_forecasts.map(f => ({ year: String(f.year), month: f.month,
+                                                    amount: ProjectsViewModel.moneyInput(f.amount_cents) }))
         changed()
         ProjectsViewModel.clearMessages()
     }
@@ -133,6 +138,32 @@ AppDialog {
         ProjectsViewModel.fieldEdited("codevelopers")
         ProjectsViewModel.fieldEdited("payments")
     }
+    function setForecast(index, key, value) {
+        forecasts[index][key] = value
+        changed()
+        ProjectsViewModel.fieldEdited("forecasts")
+    }
+    // A new row is for the month after the last one (this month when there is none).
+    function addForecast() {
+        let year, month
+        const last = forecasts.length ? forecasts[forecasts.length - 1] : null
+        if (last && Number(last.year) > 0 && last.month >= 1) {
+            year = Number(last.year) + (last.month === 12 ? 1 : 0)
+            month = last.month === 12 ? 1 : last.month + 1
+        } else {
+            const today = new Date()
+            year = today.getFullYear()
+            month = today.getMonth() + 1
+        }
+        forecasts = forecasts.concat([{ year: String(year), month: month, amount: "" }])
+        changed()
+        ProjectsViewModel.fieldEdited("forecasts")
+    }
+    function removeForecast(index) {
+        forecasts = forecasts.filter((_, i) => i !== index)
+        changed()
+        ProjectsViewModel.fieldEdited("forecasts")
+    }
     function setPayment(index, key, value) {
         payments[index][key] = value
         changed()
@@ -182,7 +213,7 @@ AppDialog {
             teamBox.visible && teamBox.currentValue !== undefined ? teamBox.currentValue : 0,
             ProjectsViewModel.canChooseProjectOwner && projectOwnerBox.currentValue !== undefined
                 ? projectOwnerBox.currentValue : 0,
-            codevs, payments)
+            codevs, payments, forecasts)
     }
     function lockReason() {
         if (isNew || project.access.edit) return ""
@@ -313,6 +344,86 @@ AppDialog {
                 field.inputMethodHints: Qt.ImhFormattedNumbersOnly
                 invalid: ProjectsViewModel.errorFields.indexOf("monthlyBudget") >= 0
                 field.onTextEdited: ProjectsViewModel.fieldEdited("monthlyBudget")
+            }
+        }
+
+        // -------------------------------------------------- expected revenue
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 4
+            Label {
+                text: qsTr("Expected monthly revenue")
+                color: ProjectsViewModel.errorFields.indexOf("forecasts") >= 0 ? Theme.danger : Theme.text
+                font.pixelSize: 13
+                font.weight: Font.Medium
+            }
+            Label {
+                Layout.fillWidth: true
+                text: (dialog.tick, dialog.forecasts.length > 0
+                       ? qsTr("Expected %1").arg(ProjectsViewModel.expectedTotal(dialog.forecasts)) : "")
+                color: Theme.textMuted
+                font.pixelSize: 12
+            }
+            AppButton {
+                visible: dialog.editable
+                variant: "secondary"
+                iconName: "plus"
+                text: qsTr("Add month")
+                implicitHeight: 32
+                font.pixelSize: 12
+                onClicked: dialog.addForecast()
+            }
+        }
+        Label {
+            visible: dialog.forecasts.length === 0
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: qsTr("No expected revenue yet. Add the revenue you expect for each month.")
+            color: Theme.textFaint
+            font.pixelSize: 12
+        }
+        Repeater {
+            model: dialog.forecasts
+            delegate: RowLayout {
+                id: forecastRow
+                required property var modelData
+                required property int index
+                Layout.fillWidth: true
+                spacing: 8
+                AppTextField {
+                    Layout.preferredWidth: 100
+                    Layout.maximumWidth: 100
+                    placeholderText: qsTr("Year")
+                    text: forecastRow.modelData.year
+                    field.readOnly: !dialog.editable
+                    field.maximumLength: 4
+                    field.inputMethodHints: Qt.ImhDigitsOnly
+                    field.validator: RegularExpressionValidator { regularExpression: /[0-9]{0,4}/ }
+                    field.onTextEdited: dialog.setForecast(forecastRow.index, "year", text)
+                }
+                AppComboBox {
+                    id: monthBox
+                    Layout.fillWidth: true
+                    model: ProjectsViewModel.months
+                    box.enabled: dialog.editable
+                    Component.onCompleted: selectValue(forecastRow.modelData.month)
+                    onActivated: dialog.setForecast(forecastRow.index, "month", monthBox.currentValue)
+                }
+                AppTextField {
+                    Layout.preferredWidth: 170
+                    Layout.maximumWidth: 170
+                    placeholderText: qsTr("Expected (USD)")
+                    text: forecastRow.modelData.amount
+                    field.readOnly: !dialog.editable
+                    field.inputMethodHints: Qt.ImhFormattedNumbersOnly
+                    field.horizontalAlignment: TextInput.AlignRight
+                    field.onTextEdited: dialog.setForecast(forecastRow.index, "amount", text)
+                }
+                RemoveButton {
+                    visible: dialog.editable
+                    label: qsTr("Remove month")
+                    onClicked: dialog.removeForecast(forecastRow.index)
+                }
             }
         }
 

@@ -205,6 +205,12 @@ Item {
                                         text: qsTr("Remaining %1").arg(ProjectsViewModel.money(row.modelData.remaining_cents))
                                         color: Theme.textFaint; font.pixelSize: 11; elide: Text.ElideRight
                                     }
+                                    Label {
+                                        visible: row.modelData.revenue_forecasts.length > 0
+                                        Layout.fillWidth: true
+                                        text: qsTr("Expected %1").arg(ProjectsViewModel.money(row.modelData.expected_cents))
+                                        color: Theme.textFaint; font.pixelSize: 11; elide: Text.ElideRight
+                                    }
                                 }
                                 // Checks.
                                 ColumnLayout {
