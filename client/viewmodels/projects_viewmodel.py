@@ -426,6 +426,41 @@ class ProjectsViewModel(QObject):
             return {"text": f"-{format_money(-remaining)}", "over": True}
         return {"text": format_money(remaining), "over": False}
 
+    @Slot("QVariant", result="QVariant")
+    def paymentSummary(self, row) -> dict:
+        """A payment row's amounts for the payment table: {total, mine, paid_out, remaining, over},
+        all formatted ("" where the typed amounts are not valid)."""
+        try:
+            total, mine, payouts = self._split(dict(row))
+        except ValueError:
+            return {"total": "", "mine": "", "paid_out": "", "remaining": "", "over": False}
+        paid_out = sum(c for _, c in payouts)
+        remaining = total - mine - paid_out
+        return {
+            "total": format_money(total), "mine": format_money(mine), "paid_out": format_money(paid_out),
+            "remaining": f"-{format_money(-remaining)}" if remaining < 0 else format_money(remaining),
+            "over": remaining < 0,
+        }
+
+    @staticmethod
+    def _without_prefix(problem: str) -> str:
+        """ "Payment 1: enter …" -> "Enter …", for messages shown inside the entry's own window."""
+        _, _, rest = problem.partition(": ")
+        rest = rest or problem
+        return rest[:1].upper() + rest[1:]
+
+    @Slot("QVariant", result=str)
+    def codeveloperProblem(self, row) -> str:
+        """Why this co-developer cannot be added as entered ("" if it can)."""
+        _, problem = self._codevelopers_body([row])
+        return self._without_prefix(problem) if problem else ""
+
+    @Slot("QVariant", int, result=str)
+    def paymentProblem(self, row, codeveloper_count: int) -> str:
+        """Why this payment cannot be added as entered ("" if it can)."""
+        _, problem = self._payments_body([row], codeveloper_count)
+        return self._without_prefix(problem) if problem else ""
+
     @Property("QStringList", notify=changed)
     def fundLocations(self) -> list[str]:
         """Where funds have been kept before, most used first, to suggest when typing."""

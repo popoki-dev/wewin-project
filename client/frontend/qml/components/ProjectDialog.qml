@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import WeWin.ViewModels
 import "../themes"
 
-// Create, edit or view a project with its payment history. A project the user may not
+// Create, edit or view a project with its payment history. Co-developers and payments are
+// listed in tables and added or edited in their own windows (CodeveloperDialog, PaymentDialog). A project the user may not
 // change (locked by a check, or out of their reach) opens read-only, with the reason shown.
 AppDialog {
     id: dialog
@@ -114,17 +115,12 @@ AppDialog {
         paidText = ProjectsViewModel.money(cents)
     }
 
-    // Rows get a copy of their item from the Repeater, so edits are written back into
-    // `codevs` / `payments` themselves (without replacing the arrays, which would rebuild
-    // the rows mid-typing). Adding and removing rows does replace them.
-    function setCodev(index, key, value) {
-        codevs[index][key] = value
+    // Co-developers and payments are added and edited in their own windows; the tables
+    // here show them. Each change replaces the array, so the tables rebuild.
+    function codevAccepted(index, row) {
+        codevs = index < 0 ? codevs.concat([row]) : codevs.map((c, i) => i === index ? row : c)
         changed()
         ProjectsViewModel.fieldEdited("codevelopers")
-    }
-    function addCodev() {
-        codevs = codevs.concat([{ id: 0, nationality: "", name: "", external_id: "", contact: "" }])
-        changed()
     }
     function removeCodev(index) {
         codevs = codevs.filter((_, i) => i !== index)
@@ -137,6 +133,21 @@ AppDialog {
         changed()
         ProjectsViewModel.fieldEdited("codevelopers")
         ProjectsViewModel.fieldEdited("payments")
+    }
+    function paymentAccepted(index, row) {
+        payments = index < 0 ? payments.concat([row]) : payments.map((x, i) => i === index ? row : x)
+        changed()
+        ProjectsViewModel.fieldEdited("payments")
+    }
+    function removePayment(index) {
+        payments = payments.filter((_, i) => i !== index)
+        changed()
+        ProjectsViewModel.fieldEdited("payments")
+    }
+    function openPayment(index) {
+        paymentDialog.codevOptions = codevOptions
+        if (index < 0) paymentDialog.openNew()
+        else paymentDialog.openFor(index, payments[index], !editable)
     }
     function setForecast(index, key, value) {
         forecasts[index][key] = value
@@ -164,47 +175,6 @@ AppDialog {
         changed()
         ProjectsViewModel.fieldEdited("forecasts")
     }
-    function setPayment(index, key, value) {
-        payments[index][key] = value
-        changed()
-        ProjectsViewModel.fieldEdited("payments")
-    }
-    function addPayment() {
-        payments = payments.concat([{ id: 0, paid_on: ProjectsViewModel.today(), description: "", amount: "",
-                                      my_share: "", fund_location: "", payouts: [] }])
-        changed()
-        ProjectsViewModel.fieldEdited("payments")
-    }
-    function removePayment(index) {
-        payments = payments.filter((_, i) => i !== index)
-        changed()
-        ProjectsViewModel.fieldEdited("payments")
-    }
-    function setPayout(paymentIndex, payoutIndex, key, value) {
-        payments[paymentIndex].payouts[payoutIndex][key] = value
-        changed()
-        ProjectsViewModel.fieldEdited("payments")
-    }
-    function addPayout(paymentIndex) {
-        // Suggest the first co-developer not yet paid in this payment.
-        const used = payments[paymentIndex].payouts.map(o => o.codeveloper_index)
-        const next = codevs.findIndex((_, i) => used.indexOf(i) < 0)
-        const copy = payments.slice()
-        copy[paymentIndex] = Object.assign({}, copy[paymentIndex], {
-            payouts: copy[paymentIndex].payouts.concat([{ codeveloper_index: next, amount: "" }])
-        })
-        payments = copy
-        changed()
-    }
-    function removePayout(paymentIndex, payoutIndex) {
-        const copy = payments.slice()
-        copy[paymentIndex] = Object.assign({}, copy[paymentIndex], {
-            payouts: copy[paymentIndex].payouts.filter((_, i) => i !== payoutIndex)
-        })
-        payments = copy
-        changed()
-        ProjectsViewModel.fieldEdited("payments")
-    }
     function save() {
         ProjectsViewModel.saveProject(
             isNew ? 0 : project.id, titleField.text, startField.text, endField.text,
@@ -229,10 +199,19 @@ AppDialog {
             : project.team_name ? qsTr("%1 · created by %2").arg(project.team_name).arg(project.created_by_name || qsTr("a deleted account"))
             : qsTr("No team · created by %1").arg(project.created_by_name || qsTr("a deleted account"))
     iconName: confirmingDelete ? "alert" : "folder"
-    width: Math.min(720, (parent ? parent.width : 720) - 32)
+    width: Math.min(880, (parent ? parent.width : 880) - 32)
 
     onOpened: if (editable) titleField.forceFocus()
     onClosed: if (ProjectsViewModel.errorMessage) ProjectsViewModel.clearMessages()
+
+    CodeveloperDialog {
+        id: codevDialog
+        onAccepted: (index, row) => dialog.codevAccepted(index, row)
+    }
+    PaymentDialog {
+        id: paymentDialog
+        onAccepted: (index, row) => dialog.paymentAccepted(index, row)
+    }
 
     Connections {
         target: ProjectsViewModel
@@ -445,7 +424,7 @@ AppDialog {
                 text: qsTr("Add co-developer")
                 implicitHeight: 32
                 font.pixelSize: 12
-                onClicked: dialog.addCodev()
+                onClicked: codevDialog.openNew()
             }
         }
         Label {
@@ -456,61 +435,20 @@ AppDialog {
             color: Theme.textFaint
             font.pixelSize: 12
         }
-        Repeater {
-            model: dialog.codevs
-            delegate: ColumnLayout {
-                id: codevRow
-                required property var modelData
-                required property int index
-                Layout.fillWidth: true
-                spacing: 6
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    AppTextField {
-                        Layout.preferredWidth: 150
-                        Layout.maximumWidth: 150
-                        placeholderText: qsTr("Nationality")
-                        text: codevRow.modelData.nationality
-                        field.readOnly: !dialog.editable
-                        field.maximumLength: 100
-                        field.onTextEdited: dialog.setCodev(codevRow.index, "nationality", text)
-                    }
-                    AppTextField {
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("Name")
-                        text: codevRow.modelData.name
-                        field.readOnly: !dialog.editable
-                        field.maximumLength: 200
-                        field.onTextEdited: dialog.setCodev(codevRow.index, "name", text)
-                    }
-                    AppTextField {
-                        Layout.preferredWidth: 160
-                        Layout.maximumWidth: 160
-                        placeholderText: qsTr("ID")
-                        text: codevRow.modelData.external_id
-                        field.readOnly: !dialog.editable
-                        field.maximumLength: 100
-                        field.onTextEdited: dialog.setCodev(codevRow.index, "external_id", text)
-                    }
-                    RemoveButton {
-                        visible: dialog.editable
-                        label: qsTr("Remove co-developer (and their payouts)")
-                        onClicked: dialog.removeCodev(codevRow.index)
-                    }
-                }
-                AppTextField {
-                    // Optional, so it does not count towards the nationality / name / ID rule.
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 4
-                    placeholderText: qsTr("Contact (optional): email, phone, messenger…")
-                    text: codevRow.modelData.contact
-                    visible: dialog.editable || text.length > 0
-                    field.readOnly: !dialog.editable
-                    field.maximumLength: 300
-                    field.onTextEdited: dialog.setCodev(codevRow.index, "contact", text)
-                }
-            }
+        Table {
+            visible: dialog.codevs.length > 0
+            Layout.fillWidth: true
+            columns: [
+                { title: qsTr("Name"), fill: true },
+                { title: qsTr("ID"), width: 120 },
+                { title: qsTr("Nationality"), width: 110 },
+                { title: qsTr("Contact"), fill: true },
+            ]
+            rows: dialog.codevs.map(c => [c.name || "—", c.external_id || "—", c.nationality || "—", c.contact || "—"])
+            editable: dialog.editable
+            removeLabel: qsTr("Remove co-developer (and their payouts)")
+            onOpenRow: i => codevDialog.openFor(i, dialog.codevs[i], !dialog.editable)
+            onRemoveRow: i => dialog.removeCodev(i)
         }
 
         // ---------------------------------------------------------- payments
@@ -536,7 +474,7 @@ AppDialog {
                 text: qsTr("Add payment")
                 implicitHeight: 32
                 font.pixelSize: 12
-                onClicked: dialog.addPayment()
+                onClicked: dialog.openPayment(-1)
             }
         }
         Label {
@@ -545,182 +483,28 @@ AppDialog {
             color: Theme.textFaint
             font.pixelSize: 12
         }
-        Repeater {
-            model: dialog.payments
-            delegate: Rectangle {
-                id: paymentCard
-                required property var modelData
-                required property int index
-                readonly property var summary: (dialog.tick, ProjectsViewModel.paymentRemaining(dialog.payments[index] || {}))
-                Layout.fillWidth: true
-                implicitHeight: paymentBody.implicitHeight + 24
-                radius: Theme.radius
-                color: Theme.surfaceAlt
-                border.width: 1
-                border.color: Theme.border
-
-                ColumnLayout {
-                    id: paymentBody
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 8
-
-                    // Date, description, total received.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        AppTextField {
-                            Layout.preferredWidth: 130
-                            Layout.maximumWidth: 130
-                            label: qsTr("Date")
-                            placeholderText: "YYYY-MM-DD"
-                            text: paymentCard.modelData.paid_on
-                            field.readOnly: !dialog.editable
-                            field.maximumLength: 10
-                            field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
-                            field.onTextEdited: dialog.setPayment(paymentCard.index, "paid_on", text)
-                        }
-                        AppTextField {
-                            Layout.fillWidth: true
-                            label: qsTr("Description")
-                            placeholderText: qsTr("e.g. Milestone 1")
-                            text: paymentCard.modelData.description
-                            field.readOnly: !dialog.editable
-                            field.maximumLength: 300
-                            field.onTextEdited: dialog.setPayment(paymentCard.index, "description", text)
-                        }
-                        AppTextField {
-                            Layout.preferredWidth: 150
-                            Layout.maximumWidth: 150
-                            label: qsTr("Total received")
-                            placeholderText: "0.00"
-                            text: paymentCard.modelData.amount
-                            field.readOnly: !dialog.editable
-                            field.inputMethodHints: Qt.ImhFormattedNumbersOnly
-                            field.horizontalAlignment: TextInput.AlignRight
-                            field.onTextEdited: dialog.setPayment(paymentCard.index, "amount", text)
-                        }
-                        RemoveButton {
-                            visible: dialog.editable
-                            Layout.alignment: Qt.AlignBottom
-                            label: qsTr("Remove payment")
-                            onClicked: dialog.removePayment(paymentCard.index)
-                        }
-                    }
-
-                    // Your portion and where the money is kept.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        AppTextField {
-                            Layout.preferredWidth: 150
-                            Layout.maximumWidth: 150
-                            label: qsTr("Your portion")
-                            placeholderText: "0.00"
-                            text: paymentCard.modelData.my_share
-                            field.readOnly: !dialog.editable
-                            field.inputMethodHints: Qt.ImhFormattedNumbersOnly
-                            field.horizontalAlignment: TextInput.AlignRight
-                            field.onTextEdited: dialog.setPayment(paymentCard.index, "my_share", text)
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 4
-                            AppTextField {
-                                id: locationField
-                                Layout.fillWidth: true
-                                label: qsTr("Funds kept at")
-                                placeholderText: qsTr("e.g. Wise USD account")
-                                text: paymentCard.modelData.fund_location
-                                field.readOnly: !dialog.editable
-                                field.maximumLength: 200
-                                field.onTextEdited: dialog.setPayment(paymentCard.index, "fund_location", text)
-                            }
-                            // Places used before, matching what is typed.
-                            Flow {
-                                readonly property string typed: (dialog.tick, (dialog.payments[paymentCard.index] || {}).fund_location || "")
-                                readonly property var matches: ProjectsViewModel.fundLocations
-                                    .filter(l => l !== typed && l.toLowerCase().indexOf(typed.toLowerCase()) >= 0).slice(0, 4)
-                                visible: dialog.editable && locationField.field.activeFocus && matches.length > 0
-                                Layout.fillWidth: true
-                                spacing: 10
-                                Repeater {
-                                    model: parent.matches
-                                    delegate: LinkButton {
-                                        required property string modelData
-                                        text: modelData
-                                        font.pixelSize: 12
-                                        onClicked: {
-                                            locationField.text = modelData
-                                            dialog.setPayment(paymentCard.index, "fund_location", modelData)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Payouts to co-developers.
-                    Repeater {
-                        model: paymentCard.modelData.payouts
-                        delegate: RowLayout {
-                            id: payoutRow
-                            required property var modelData
-                            required property int index
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Label { text: qsTr("Paid to"); color: Theme.textMuted; font.pixelSize: 12 }
-                            AppComboBox {
-                                id: payoutWho
-                                Layout.fillWidth: true
-                                model: dialog.codevOptions
-                                box.enabled: dialog.editable
-                                Component.onCompleted: selectValue(payoutRow.modelData.codeveloper_index)
-                                onModelChanged: selectValue((dialog.payments[paymentCard.index].payouts[payoutRow.index] || {}).codeveloper_index)
-                                onActivated: dialog.setPayout(paymentCard.index, payoutRow.index, "codeveloper_index", currentValue)
-                            }
-                            AppTextField {
-                                Layout.preferredWidth: 150
-                                Layout.maximumWidth: 150
-                                placeholderText: "0.00"
-                                text: payoutRow.modelData.amount
-                                field.readOnly: !dialog.editable
-                                field.inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                field.horizontalAlignment: TextInput.AlignRight
-                                field.onTextEdited: dialog.setPayout(paymentCard.index, payoutRow.index, "amount", text)
-                            }
-                            RemoveButton {
-                                visible: dialog.editable
-                                label: qsTr("Remove payout")
-                                onClicked: dialog.removePayout(paymentCard.index, payoutRow.index)
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        LinkButton {
-                            visible: dialog.editable && dialog.codevs.length > paymentCard.modelData.payouts.length
-                            text: qsTr("+ Pay a co-developer")
-                            font.pixelSize: 12
-                            onClicked: dialog.addPayout(paymentCard.index)
-                        }
-                        Label {
-                            visible: dialog.editable && dialog.codevs.length === 0
-                            text: qsTr("Add co-developers above to record payouts to them.")
-                            color: Theme.textFaint
-                            font.pixelSize: 12
-                        }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            text: paymentCard.summary.text ? qsTr("Remaining %1").arg(paymentCard.summary.text) : ""
-                            color: paymentCard.summary.over ? Theme.danger : Theme.text
-                            font.pixelSize: 13
-                            font.weight: Font.DemiBold
-                        }
-                    }
-                }
-            }
+        Table {
+            visible: dialog.payments.length > 0
+            Layout.fillWidth: true
+            columns: [
+                { title: qsTr("Date"), width: 86 },
+                { title: qsTr("Description"), fill: true },
+                { title: qsTr("Received"), width: 96, right: true },
+                { title: qsTr("Your portion"), width: 96, right: true },
+                { title: qsTr("Paid out"), width: 90, right: true },
+                { title: qsTr("Remaining"), width: 96, right: true, strong: true },
+                { title: qsTr("Kept at"), width: 100 },
+            ]
+            rows: (dialog.tick, dialog.payments.map(x => {
+                const sum = ProjectsViewModel.paymentSummary(x)
+                return [x.paid_on, x.description || "—", sum.total, sum.mine, sum.paid_out,
+                        sum.remaining, x.fund_location || "—"]
+            }))
+            dangerCells: (dialog.tick, dialog.payments.map(x => ProjectsViewModel.paymentSummary(x).over ? [5] : []))
+            editable: dialog.editable
+            removeLabel: qsTr("Remove payment")
+            onOpenRow: i => dialog.openPayment(i)
+            onRemoveRow: i => dialog.removePayment(i)
         }
 
         // ----------------------------------------------------------- details

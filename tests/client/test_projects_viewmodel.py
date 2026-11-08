@@ -266,3 +266,26 @@ def test_expected_total(tmp_path, monkeypatch):
     vm, _ = signed_in(tmp_path, monkeypatch)
     assert vm.expectedTotal([{"amount": "1,000"}, {"amount": "250.50"}, {"amount": "x"}]) == "$1,250.50"
     assert vm.expectedTotal([]) == ""
+
+
+def test_payment_summary_for_the_table(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch)
+    assert vm.paymentSummary(split_row()) == {
+        "total": "$1,000.00", "mine": "$500.00", "paid_out": "$450.00", "remaining": "$50.00", "over": False,
+    }
+    assert vm.paymentSummary(split_row(my_share="900"))["remaining"] == "-$350.00"
+    assert vm.paymentSummary(split_row(amount="x"))["total"] == ""
+
+
+def test_entry_windows_check_one_entry(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    assert vm.codeveloperProblem({"nationality": "", "name": " ", "external_id": "", "contact": "a@b.c"}) == (
+        "Enter a nationality, a name or an ID."
+    )
+    assert vm.codeveloperProblem({"name": "Aiko"}) == ""
+    assert vm.paymentProblem(split_row(my_share="900"), 2) == (
+        "Your portion and the payouts are more than the total received."
+    )
+    assert vm.paymentProblem(split_row(), 2) == ""
+    assert vm.paymentProblem(split_row(), 1).startswith("A payout is to a co-developer")
+    assert api.calls == [] and vm.errorMessage == ""  # nothing is sent or shown on the page
