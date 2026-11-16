@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import "../themes"
 
 // A small read-only table with a header and an Edit (or View) action per row; rows are
-// edited elsewhere. Clicking a row opens it too.
+// edited elsewhere. Clicking a row opens it too. Optionally shows each row's review state
+// with a Review / Undo action.
 Rectangle {
     id: table
 
@@ -15,10 +16,24 @@ Rectangle {
     // Per row, the column indexes shown in the danger colour (e.g. a negative balance).
     property var dangerCells: []
     property bool editable: true
+    // Per row, whether it may be changed (defaults to `editable`); locked rows offer View only.
+    property var rowEditable: []
     property string removeLabel: qsTr("Remove")
+    // Review column: per row {text, tone} (see ReviewChip), and per row the review action
+    // offered: "review", "unreview" or "" (none). Hidden while `reviewStatus` is empty.
+    property var reviewStatus: []
+    property var reviewActions: []
+    property string reviewHint: ""      // shown instead of the actions, e.g. "save first"
+    readonly property bool showReview: reviewStatus.length > 0
+    readonly property int actionsWidth: 72 + (showReview ? 54 : 0)
 
     signal openRow(int index)
     signal removeRow(int index)
+    signal reviewRow(int index, string action)
+
+    function rowMayEdit(i) {
+        return table.editable && (table.rowEditable.length <= i || table.rowEditable[i] !== false)
+    }
 
     implicitHeight: content.implicitHeight + 2
     radius: Theme.radius
@@ -47,20 +62,22 @@ Rectangle {
                 spacing: 10
                 Repeater {
                     model: table.columns
-                    delegate: Label {
+                    delegate: HeaderLabel {
                         required property var modelData
                         Layout.fillWidth: !!modelData.fill
                         Layout.preferredWidth: modelData.fill ? 60 : modelData.width
                         Layout.maximumWidth: modelData.fill ? Number.POSITIVE_INFINITY : modelData.width
                         horizontalAlignment: modelData.right ? Text.AlignRight : Text.AlignLeft
                         text: modelData.title
-                        color: Theme.textMuted
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
                     }
                 }
-                Item { Layout.preferredWidth: actions.implicitWidth; implicitHeight: 1 }
+                HeaderLabel {
+                    visible: table.showReview
+                    Layout.preferredWidth: 78
+                    Layout.maximumWidth: 78
+                    text: qsTr("Review")
+                }
+                Item { Layout.preferredWidth: table.actionsWidth; implicitHeight: 1 }
             }
         }
 
@@ -70,6 +87,8 @@ Rectangle {
                 id: rowItem
                 required property var modelData
                 required property int index
+                readonly property bool mayEdit: table.rowMayEdit(index)
+                readonly property string reviewAction: table.reviewActions[index] || ""
                 Layout.fillWidth: true
                 implicitHeight: 40
                 color: hover.hovered ? Theme.surfaceHover : "transparent"
@@ -100,15 +119,39 @@ Rectangle {
                             elide: Text.ElideRight
                         }
                     }
+                    Item {
+                        visible: table.showReview
+                        Layout.preferredWidth: 78
+                        Layout.maximumWidth: 78
+                        implicitHeight: 22
+                        ReviewChip {
+                            anchors.verticalCenter: parent.verticalCenter
+                            readonly property var status: table.reviewStatus[rowItem.index] || ({})
+                            text: status.text || ""
+                            tone: status.tone || "pending"
+                        }
+                    }
                     RowLayout {
-                        spacing: 2
+                        Layout.preferredWidth: table.actionsWidth
+                        Layout.maximumWidth: table.actionsWidth
+                        spacing: 6
+                        Item { Layout.fillWidth: true }
                         LinkButton {
-                            text: table.editable ? qsTr("Edit") : qsTr("View")
+                            visible: table.showReview && rowItem.reviewAction !== "" && table.reviewHint === ""
+                            text: rowItem.reviewAction === "review" ? qsTr("Review") : qsTr("Undo")
+                            font.pixelSize: 12
+                            onClicked: table.reviewRow(rowItem.index, rowItem.reviewAction)
+                        }
+                        LinkButton {
+                            text: rowItem.mayEdit ? qsTr("Edit") : qsTr("View")
                             font.pixelSize: 12
                             onClicked: table.openRow(rowItem.index)
                         }
                         ToolButton {
                             id: removeButton
+                            // Kept in the layout (invisible) on locked rows so the columns line up.
+                            opacity: rowItem.mayEdit ? 1 : 0
+                            enabled: rowItem.mayEdit
                             visible: table.editable
                             implicitWidth: 28
                             implicitHeight: 28
@@ -126,12 +169,10 @@ Rectangle {
         }
     }
 
-    // Measures the action column so the header lines up with the rows.
-    RowLayout {
-        id: actions
-        visible: false
-        spacing: 2
-        LinkButton { text: table.editable ? qsTr("Edit") : qsTr("View"); font.pixelSize: 12 }
-        Item { visible: table.editable; implicitWidth: 28; implicitHeight: 28 }
+    component HeaderLabel: Label {
+        color: Theme.textMuted
+        font.pixelSize: 11
+        font.weight: Font.DemiBold
+        elide: Text.ElideRight
     }
 }

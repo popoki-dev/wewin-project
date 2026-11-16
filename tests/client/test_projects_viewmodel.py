@@ -30,6 +30,7 @@ class FakeProjectsApi:
     def delete(self, server, token, project_id, cb): self._answer("delete", cb, project_id)
     def check(self, server, token, project_id, cb): self._answer("check", cb, project_id)
     def uncheck(self, server, token, project_id, level, cb): self._answer("uncheck", cb, project_id, level)
+    def review(self, server, token, project_id, body, cb): self._answer("review", cb, project_id, body)
 
 
 def signed_in(tmp_path, monkeypatch, role="owner"):
@@ -289,3 +290,24 @@ def test_entry_windows_check_one_entry(tmp_path, monkeypatch):
     assert vm.paymentProblem(split_row(), 2) == ""
     assert vm.paymentProblem(split_row(), 1).startswith("A payout is to a co-developer")
     assert api.calls == [] and vm.errorMessage == ""  # nothing is sent or shown on the page
+
+
+def test_review_items(tmp_path, monkeypatch):
+    vm, api = signed_in(tmp_path, monkeypatch)
+    reviewed = []
+    vm.projectReviewed.connect(reviewed.append)
+    api.results["review"] = ApiResult(True, 200, {"title": "Website", "id": 4})
+    vm.reviewItems(4, [{"kind": "payment", "id": 9}, {"kind": "forecast", "id": 2.0}], "review")
+    assert api.calls[0] == ("review", 4, {"action": "review", "items": [{"kind": "payment", "id": 9},
+                                                                         {"kind": "forecast", "id": 2}]})
+    assert reviewed == [{"title": "Website", "id": 4}] and "2 items reviewed" in vm.notice
+    vm.reviewItems(4, [], "review")
+    assert len([c for c in api.calls if c[0] == "review"]) == 1  # nothing to send
+
+
+def test_review_status(tmp_path, monkeypatch):
+    vm, _ = signed_in(tmp_path, monkeypatch)
+    assert vm.reviewStatus({"leader_review": None, "owner_review": None})["tone"] == "pending"
+    assert vm.reviewStatus({"leader_review": {"at": "x"}, "owner_review": None})["text"] == "Leader ✓"
+    assert vm.reviewStatus({"leader_review": {"at": "x"}, "owner_review": {"at": "y"}})["tone"] == "owner"
+    assert vm.reviewStatus({})["tone"] == "pending"  # a new, unsaved item

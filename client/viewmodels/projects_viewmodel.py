@@ -63,6 +63,8 @@ class ProjectsViewModel(QObject):
     stateChanged = Signal()
     projectSaved = Signal()
     projectDeleted = Signal()
+    # The project after its items' reviews changed, so an open project window can show it.
+    projectReviewed = Signal("QVariant")
 
     def __init__(self, auth: AuthViewModel, api: ProjectsApi, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -499,6 +501,35 @@ class ProjectsViewModel(QObject):
             self.refresh()
 
         self._call(self._api.uncheck, int(project["id"]), level, on_ok=unchecked)
+
+    @Slot(int, "QVariantList", str)
+    def reviewItems(self, project_id: int, items: list, action: str) -> None:
+        """Review expected revenue rows, co-developers or payments ([{kind, id}]) at this user's
+        level, or remove the review this user may remove (`action` "unreview")."""
+        refs = [{"kind": str(dict(i)["kind"]), "id": int(dict(i)["id"])} for i in items]
+        if not refs:
+            return
+
+        def done(project: dict) -> None:
+            n = len(refs)
+            what = "item" if n == 1 else "items"
+            verb = "reviewed" if action == "review" else "sent back for review"
+            self._set_state(False, notice=f"{n} {what} {verb} in “{project['title']}”.")
+            self.projectReviewed.emit(project)
+            self.refresh()
+
+        self._call(self._api.review, project_id, {"action": action, "items": refs}, on_ok=done)
+
+    @Slot("QVariant", result="QVariant")
+    def reviewStatus(self, item) -> dict:
+        """How an item's review reads in a table: {text, tone} with tone "pending",
+        "leader" or "owner"."""
+        item = dict(item or {})
+        if item.get("owner_review"):
+            return {"text": "Owner ✓", "tone": "owner"}
+        if item.get("leader_review"):
+            return {"text": "Leader ✓", "tone": "leader"}
+        return {"text": "To review", "tone": "pending"}
 
     @Slot(str)
     def fieldEdited(self, field: str) -> None:

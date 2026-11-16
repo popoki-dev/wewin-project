@@ -141,10 +141,33 @@ Item {
                                 ColumnLayout {
                                     spacing: 1
                                     Layout.fillWidth: true
-                                    Label {
-                                        text: row.modelData.title
-                                        color: Theme.text; font.pixelSize: 14; font.weight: Font.DemiBold
-                                        elide: Text.ElideRight; Layout.fillWidth: true
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Label {
+                                            text: row.modelData.title
+                                            color: Theme.text; font.pixelSize: 14; font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                            // As wide as the title, shrinking (elided) only when the row is too narrow.
+                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: Math.ceil(implicitWidth) + 1
+                                            Layout.maximumWidth: Math.ceil(implicitWidth) + 1
+                                        }
+                                        // Revenue rows, co-developers and payments not yet reviewed by the Owner.
+                                        ReviewChip {
+                                            id: reviewBadge
+                                            readonly property int leader: row.modelData.reviews_awaiting_leader || 0
+                                            readonly property int owner: row.modelData.reviews_awaiting_owner || 0
+                                            visible: leader + owner > 0
+                                            tone: leader > 0 ? "pending" : "leader"
+                                            text: qsTr("%n to review", "", leader + owner)
+                                            HoverHandler { id: badgeHover }
+                                            ToolTip.visible: badgeHover.hovered
+                                            ToolTip.text: [leader > 0 ? qsTr("%n awaiting a Team Leader", "", leader) : "",
+                                                           owner > 0 ? qsTr("%n awaiting the Owner", "", owner) : ""]
+                                                          .filter(t => t).join(" · ")
+                                        }
+                                        Item { Layout.fillWidth: true }
                                     }
                                     Label {
                                         text: [row.modelData.team_name || qsTr("No team"),

@@ -50,3 +50,5 @@ class AuditAction(str, enum.Enum):
     PROJECT_DELETED = "project.deleted"
     PROJECT_CHECKED = "project.checked"
     PROJECT_UNCHECKED = "project.unchecked"
+    PROJECT_ITEMS_REVIEWED = "project.items_reviewed"
+    PROJECT_ITEMS_UNREVIEWED = "project.items_unreviewed"

@@ -10,7 +10,7 @@ from ...database.session import get_db
 from ...models import User
 from ...repositories.audit_repository import ClientInfo
 from ...schemas.common import MessageResponse
-from ...schemas.projects import ProjectIn, ProjectOut, ProjectOwnerOption
+from ...schemas.projects import ProjectIn, ProjectOut, ProjectOwnerOption, ReviewIn
 from ...services.project_service import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -99,3 +99,16 @@ def uncheck_project(
     projects: ProjectService = Depends(get_project_service),
 ) -> ProjectOut:
     return projects.uncheck(user, project_id, level, client)
+
+
+@router.post("/{project_id}/reviews", response_model=ProjectOut)
+def review_items(
+    project_id: int,
+    body: ReviewIn,
+    user: User = Depends(get_current_user),
+    client: ClientInfo = Depends(get_client_info),
+    projects: ProjectService = Depends(get_project_service),
+) -> ProjectOut:
+    # Reviews expected revenue rows, co-developers and payments at the caller's level
+    # (Leader or Owner), or removes reviews.
+    return projects.review(user, project_id, body, client)

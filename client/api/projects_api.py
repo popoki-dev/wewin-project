@@ -26,6 +26,9 @@ class ProjectsApi:
     def delete(self, server: str, token: str, project_id: int, callback: Callback) -> None:
         self._client.delete(server, Paths.project(project_id), callback, token)
 
+    def review(self, server: str, token: str, project_id: int, body: dict, callback: Callback) -> None:
+        self._client.post(server, Paths.project_reviews(project_id), body, callback, token)
+
     def check(self, server: str, token: str, project_id: int, callback: Callback) -> None:
         self._client.post(server, Paths.project_check(project_id), {}, callback, token)
 

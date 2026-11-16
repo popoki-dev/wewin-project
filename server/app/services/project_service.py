@@ -7,6 +7,12 @@ Who may do what:
 - A member works on the projects they own. A Leader or Owner check locks it for them.
 Permissions (projects.*) gate each action on top of these scope rules.
 
+Expected revenue rows, co-developers and payments are each reviewed: first by a Team Leader
+of the project's team, then by the Owner (who may also review straight away). The project list
+badges projects with items awaiting a review. A Leader review locks the item for everyone but
+the Owner and the team's Team Leaders; an Owner review locks it for everyone but the Owner.
+Changing a reviewed item (as someone still allowed to) clears its reviews.
+
 Every project has a project owner (the person responsible for it, not the Owner role):
 the Owner may designate anyone in the organization, a Team Leader themselves or anyone
 on the teams they lead, and a member's projects are always their own.
@@ -15,7 +21,7 @@ on the teams they lead, and a member's projects are always their own.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Union
 
 from sqlalchemy.orm import Session
 
@@ -23,6 +29,7 @@ from shared.enums import AuditAction, Role
 from shared.permissions import Permission
 
 from ..models import PaymentPayout, Project, ProjectCodeveloper, ProjectPayment, ProjectRevenueForecast, User
+from ..models.project import Reviewable
 from ..repositories.audit_repository import AuditRepository, ClientInfo
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.team_repository import TeamRepository
@@ -31,6 +38,7 @@ from ..schemas.projects import (
     CheckOut,
     CodeveloperIn,
     CodeveloperOut,
+    ItemAccess,
     PaymentIn,
     PaymentOut,
     PayoutOut,
@@ -40,6 +48,8 @@ from ..schemas.projects import (
     ProjectOwnerOption,
     RevenueForecastIn,
     RevenueForecastOut,
+    ReviewIn,
+    ReviewLevel,
 )
 from .errors import ServiceError
 
@@ -47,6 +57,10 @@ NOT_FOUND = "Project not found."
 NO_PERMISSION = "You do not have permission to do this."
 LOCKED_BY_OWNER = "The Owner has checked this project, so it can no longer be changed."
 LOCKED_BY_LEADER = "A Team Leader has checked this project, so it can no longer be changed."
+ITEM_REVIEWED_BY_OWNER = "{item} has been reviewed by the Owner, so it can no longer be changed."
+ITEM_REVIEWED_BY_LEADER = "{item} has been reviewed by a Team Leader, so it can no longer be changed."
+
+Item = Union[ProjectCodeveloper, ProjectPayment, ProjectRevenueForecast]
 
 CheckLevel = Literal["leader", "owner"]
 
@@ -115,6 +129,105 @@ class ProjectService:
             check=check,
             uncheck=uncheck,
         )
+
+    # --------------------------------------------------------- item reviews
+    def _review_level(self, actor: User, project: Project) -> ReviewLevel | None:
+        """The review this actor places on this project's items, if any. An Owner check on
+        the project locks it, reviews included, for Team Leaders."""
+        if self._is_owner(actor):
+            return "owner"
+        if actor.can(Permission.PROJECTS_CHECK) and self._leads(actor, project) and project.owner_checked_at is None:
+            return "leader"
+        return None
+
+    def _item_lock(self, actor: User, project: Project, item: Reviewable) -> str | None:
+        """Why the actor may not change or delete this item because of its reviews, if they may not."""
+        if self._is_owner(actor):
+            return None
+        if item.owner_reviewed_at is not None:
+            return ITEM_REVIEWED_BY_OWNER
+        if item.leader_reviewed_at is not None and not self._leads(actor, project):
+            return ITEM_REVIEWED_BY_LEADER
+        return None
+
+    def _ensure_item_changeable(self, actor: User, project: Project, item: Item) -> None:
+        if (reason := self._item_lock(actor, project, item)) is not None:
+            raise ServiceError(409, reason.format(item=self._item_name(item)))
+
+    @staticmethod
+    def _item_name(item: Item) -> str:
+        if isinstance(item, ProjectCodeveloper):
+            return f"Co-developer “{item.label}”"
+        if isinstance(item, ProjectPayment):
+            return f"The payment of {item.paid_on.isoformat()}"
+        return f"Expected revenue for {item.year}-{item.month:02d}"
+
+    def _item_access(self, actor: User, project: Project, item: Reviewable, may_edit: bool) -> ItemAccess:
+        level = self._review_level(actor, project)
+        if level == "owner":
+            review = item.owner_reviewed_at is None
+            unreview = item.owner_reviewed_at is not None or item.leader_reviewed_at is not None
+        elif level == "leader":
+            review = item.owner_reviewed_at is None and item.leader_reviewed_at is None
+            unreview = item.owner_reviewed_at is None and item.leader_reviewed_at is not None
+        else:
+            review = unreview = False
+        return ItemAccess(edit=may_edit and self._item_lock(actor, project, item) is None,
+                          review=review, unreview=unreview)
+
+    def review(self, actor: User, project_id: int, body: ReviewIn, client: ClientInfo) -> ProjectOut:
+        """Place the actor's review on items, or remove a review (`body.action`)."""
+        project = self._get(actor, project_id)
+        level = self._review_level(actor, project)
+        if level is None:
+            if self._is_owner(actor) or (actor.role == Role.TEAM_LEADER and self._leads(actor, project)
+                                         and project.owner_checked_at is not None):
+                raise ServiceError(409, LOCKED_BY_OWNER)
+            raise ServiceError(403, NO_PERMISSION)
+        pools: dict[str, dict[int, Item]] = {
+            "forecast": {f.id: f for f in project.revenue_forecasts},
+            "codeveloper": {c.id: c for c in project.codevelopers},
+            "payment": {p.id: p for p in project.payments},
+        }
+        items: list[Item] = []
+        for ref in body.items:
+            item = pools[ref.kind].get(ref.id)
+            if item is None:
+                raise ServiceError(404, "That item is not part of this project.")
+            items.append(item)
+        now = _now()
+        changed = 0
+        for item in items:
+            if body.action == "review":
+                if level == "owner":
+                    if item.owner_reviewed_at is None:
+                        item.owner_reviewed_at, item.owner_reviewed_by_id, item.owner_reviewed_by = now, actor.id, actor
+                        changed += 1
+                elif item.owner_reviewed_at is not None:
+                    raise ServiceError(409, ITEM_REVIEWED_BY_OWNER.format(item=self._item_name(item)))
+                elif item.leader_reviewed_at is None:
+                    item.leader_reviewed_at, item.leader_reviewed_by_id, item.leader_reviewed_by = now, actor.id, actor
+                    changed += 1
+                continue
+            target = body.level or ("owner" if level == "owner" and item.owner_reviewed_at is not None else "leader")
+            if level == "leader" and target == "owner":
+                raise ServiceError(403, NO_PERMISSION)
+            if level == "leader" and item.owner_reviewed_at is not None:
+                raise ServiceError(409, ITEM_REVIEWED_BY_OWNER.format(item=self._item_name(item)))
+            if target == "owner" and item.owner_reviewed_at is not None:
+                item.owner_reviewed_at = item.owner_reviewed_by_id = item.owner_reviewed_by = None
+                changed += 1
+            elif target == "leader" and item.leader_reviewed_at is not None:
+                item.leader_reviewed_at = item.leader_reviewed_by_id = item.leader_reviewed_by = None
+                changed += 1
+        action = AuditAction.PROJECT_ITEMS_REVIEWED if body.action == "review" else AuditAction.PROJECT_ITEMS_UNREVIEWED
+        self.audit.record(
+            action, client, user_id=actor.id, organization_id=actor.organization_id, project_id=project.id,
+            level=level if body.action == "review" else body.level, items=[r.model_dump() for r in body.items],
+            changed=changed,
+        )
+        self.db.commit()
+        return self._out(actor, project)
 
     def _get(self, actor: User, project_id: int) -> Project:
         project = self.projects.get(project_id)
@@ -220,7 +333,7 @@ class ProjectService:
         codevelopers = [self._codeveloper(c) for c in body.codevelopers]
         project.codevelopers = codevelopers
         project.payments = [self._payment(p, codevelopers) for p in body.payments]
-        self._sync_forecasts(project, body.revenue_forecasts)
+        self._sync_forecasts(None, project, body.revenue_forecasts)
         self.projects.add(project)
         self.audit.record(
             AuditAction.PROJECT_CREATED, client, user_id=actor.id, organization_id=actor.organization_id,
@@ -237,9 +350,9 @@ class ProjectService:
         project.team = None if project.team_id is None else self.teams.get(project.team_id)
         project.project_owner = self._resolve_project_owner(actor, body.project_owner_id, current=project)
         self._apply(project, body)
-        codevelopers, codev_changes = self._sync_codevelopers(project, body.codevelopers)
-        changes = {**codev_changes, **self._sync_payments(project, body.payments, codevelopers)}
-        changes["revenue_forecasts"] = self._sync_forecasts(project, body.revenue_forecasts)
+        codevelopers, codev_changes = self._sync_codevelopers(actor, project, body.codevelopers)
+        changes = {**codev_changes, **self._sync_payments(actor, project, body.payments, codevelopers)}
+        changes["revenue_forecasts"] = self._sync_forecasts(actor, project, body.revenue_forecasts)
         self.audit.record(
             AuditAction.PROJECT_UPDATED, client, user_id=actor.id, organization_id=actor.organization_id,
             project_id=project.id, title=project.title, project_owner_id=project.project_owner_id, **changes,
@@ -317,22 +430,28 @@ class ProjectService:
         )
 
     def _sync_codevelopers(
-        self, project: Project, entries: list[CodeveloperIn]
+        self, actor: User, project: Project, entries: list[CodeveloperIn]
     ) -> tuple[list[ProjectCodeveloper], dict]:
         """Make the co-developers match `entries` (update by id, add new, delete the rest).
-        Returns them in `entries` order, which is what payouts' `codeveloper_index` refers to."""
+        Returns them in `entries` order, which is what payouts' `codeveloper_index` refers to.
+        Changing or deleting a reviewed one needs the right to; a changed one loses its reviews."""
         existing = {c.id: c for c in project.codevelopers}
         ids = [e.id for e in entries if e.id is not None]
         if len(ids) != len(set(ids)) or not set(ids) <= existing.keys():
             raise ServiceError(422, "The co-developers refer to entries that are not part of this project.")
+        for removed in existing.keys() - set(ids):
+            self._ensure_item_changeable(actor, project, existing[removed])
         result: list[ProjectCodeveloper] = []
         for entry in entries:
             if entry.id is None:
                 result.append(self._codeveloper(entry))
                 continue
             codev = existing[entry.id]
-            codev.nationality, codev.name, codev.external_id = entry.nationality, entry.name, entry.external_id
-            codev.contact = entry.contact
+            new = (entry.nationality, entry.name, entry.external_id, entry.contact)
+            if (codev.nationality, codev.name, codev.external_id, codev.contact) != new:
+                self._ensure_item_changeable(actor, project, codev)
+                codev.nationality, codev.name, codev.external_id, codev.contact = new
+                codev.clear_reviews()
             result.append(codev)
         project.codevelopers = result
         return result, {"codevelopers": len(result), "codevelopers_removed": len(existing) - len(ids)}
@@ -355,14 +474,26 @@ class ProjectService:
         self._fill_payment(payment, entry, codevelopers)
         return payment
 
+    @staticmethod
+    def _payment_unchanged(payment: ProjectPayment, entry: PaymentIn, codevelopers: list[ProjectCodeveloper]) -> bool:
+        before = (payment.paid_on, payment.description, payment.amount_cents, payment.my_share_cents,
+                  payment.fund_location, [(x.codeveloper.id, x.amount_cents) for x in payment.payouts])
+        after = (entry.paid_on, entry.description, entry.amount_cents, entry.my_share_cents, entry.fund_location,
+                 [(codevelopers[p.codeveloper_index].id, p.amount_cents) for p in entry.payouts])
+        # A payout to a co-developer added in this request (no id yet) is always a change.
+        return before == after and all(i is not None for i, _ in after[5])
+
     def _sync_payments(
-        self, project: Project, entries: list[PaymentIn], codevelopers: list[ProjectCodeveloper]
+        self, actor: User, project: Project, entries: list[PaymentIn], codevelopers: list[ProjectCodeveloper]
     ) -> dict:
-        """Make the payment history match `entries`: update by id, add new, delete the rest."""
+        """Make the payment history match `entries`: update by id, add new, delete the rest.
+        Changing or deleting a reviewed one needs the right to; a changed one loses its reviews."""
         existing = {p.id: p for p in project.payments}
         ids = [e.id for e in entries if e.id is not None]
         if len(ids) != len(set(ids)) or not set(ids) <= existing.keys():
             raise ServiceError(422, "The payment history refers to payments that are not part of this project.")
+        for removed in existing.keys() - set(ids):
+            self._ensure_item_changeable(actor, project, existing[removed])
         kept: list[ProjectPayment] = []
         added = 0
         for entry in entries:
@@ -371,22 +502,32 @@ class ProjectService:
                 added += 1
                 continue
             payment = existing[entry.id]
-            self._fill_payment(payment, entry, codevelopers)
+            if not self._payment_unchanged(payment, entry, codevelopers):
+                self._ensure_item_changeable(actor, project, payment)
+                self._fill_payment(payment, entry, codevelopers)
+                payment.clear_reviews()
             kept.append(payment)
         project.payments = kept
         return {"payments": len(kept), "payments_added": added, "payments_removed": len(existing) - len(ids)}
 
-    @staticmethod
-    def _sync_forecasts(project: Project, entries: list[RevenueForecastIn]) -> int:
+    def _sync_forecasts(self, actor: User | None, project: Project, entries: list[RevenueForecastIn]) -> int:
         """Make the expected monthly revenue match `entries`, matched by year and month
-        (a month keeps its row, so the unique constraint never sees a delete-then-insert)."""
+        (a month keeps its row, so the unique constraint never sees a delete-then-insert).
+        Changing or deleting a reviewed month needs the right to; a changed one loses its reviews."""
         existing = {(f.year, f.month): f for f in project.revenue_forecasts}
+        if actor is not None:
+            for month in existing.keys() - {(e.year, e.month) for e in entries}:
+                self._ensure_item_changeable(actor, project, existing[month])
         kept: list[ProjectRevenueForecast] = []
         for entry in entries:
-            forecast = existing.get((entry.year, entry.month)) or ProjectRevenueForecast(
-                year=entry.year, month=entry.month
-            )
-            forecast.amount_cents = entry.amount_cents
+            forecast = existing.get((entry.year, entry.month))
+            if forecast is None:
+                forecast = ProjectRevenueForecast(year=entry.year, month=entry.month, amount_cents=entry.amount_cents)
+            elif forecast.amount_cents != entry.amount_cents:
+                if actor is not None:
+                    self._ensure_item_changeable(actor, project, forecast)
+                forecast.amount_cents = entry.amount_cents
+                forecast.clear_reviews()
             kept.append(forecast)
         project.revenue_forecasts = sorted(kept, key=lambda f: (f.year, f.month))
         return len(kept)
@@ -394,6 +535,17 @@ class ProjectService:
     def _out(self, actor: User, project: Project) -> ProjectOut:
         def check(at, by) -> CheckOut | None:
             return None if at is None else CheckOut(at=at, by=(by.full_name or by.email) if by else None)
+
+        access = self._access(actor, project)
+
+        def reviewed(item: Reviewable) -> dict:
+            return {
+                "leader_review": check(item.leader_reviewed_at, item.leader_reviewed_by),
+                "owner_review": check(item.owner_reviewed_at, item.owner_reviewed_by),
+                "access": self._item_access(actor, project, item, access.edit),
+            }
+
+        items: list[Reviewable] = [*project.revenue_forecasts, *project.codevelopers, *project.payments]
 
         payments = sorted(project.payments, key=lambda p: (p.paid_on, p.id or 0))
 
@@ -409,6 +561,7 @@ class ProjectService:
                 ],
                 paid_out_cents=paid_out,
                 remaining_cents=p.amount_cents - p.my_share_cents - paid_out,
+                **reviewed(p),
             )
 
         return ProjectOut(
@@ -434,17 +587,20 @@ class ProjectService:
             owner_check=check(project.owner_checked_at, project.owner_checked_by),
             codevelopers=[
                 CodeveloperOut(
-                    id=c.id, nationality=c.nationality, name=c.name, external_id=c.external_id, contact=c.contact
+                    id=c.id, nationality=c.nationality, name=c.name, external_id=c.external_id, contact=c.contact,
+                    **reviewed(c),
                 )
                 for c in project.codevelopers
             ],
             payments=[payment_out(p) for p in payments],
             revenue_forecasts=[
-                RevenueForecastOut(year=f.year, month=f.month, amount_cents=f.amount_cents)
+                RevenueForecastOut(id=f.id, year=f.year, month=f.month, amount_cents=f.amount_cents, **reviewed(f))
                 for f in project.revenue_forecasts
             ],
             expected_cents=sum(f.amount_cents for f in project.revenue_forecasts),
+            reviews_awaiting_leader=sum(1 for i in items if i.leader_reviewed_at is None and i.owner_reviewed_at is None),
+            reviews_awaiting_owner=sum(1 for i in items if i.leader_reviewed_at is not None and i.owner_reviewed_at is None),
             created_at=project.created_at,
             updated_at=project.updated_at,
-            access=self._access(actor, project),
+            access=access,
         )

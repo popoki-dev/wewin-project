@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Project
+from ..models import Project, ProjectCodeveloper, ProjectPayment, ProjectRevenueForecast
 
 
 class ProjectRepository:
@@ -33,10 +33,13 @@ class ProjectRepository:
 
     def forget_user(self, user_id: int) -> None:
         """A deleted account: its projects and checks stay, without the link to it."""
-        for column in (Project.created_by_id, Project.project_owner_id, Project.leader_checked_by_id,
-                       Project.owner_checked_by_id):
+        columns = [(Project, c) for c in (Project.created_by_id, Project.project_owner_id,
+                                          Project.leader_checked_by_id, Project.owner_checked_by_id)]
+        for model in (ProjectRevenueForecast, ProjectCodeveloper, ProjectPayment):
+            columns += [(model, model.leader_reviewed_by_id), (model, model.owner_reviewed_by_id)]
+        for model, column in columns:
             self.db.execute(
-                update(Project).where(column == user_id).values({column.key: None})
+                update(model).where(column == user_id).values({column.key: None})
                 .execution_options(synchronize_session="fetch")
             )
 

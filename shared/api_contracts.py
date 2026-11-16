@@ -32,6 +32,10 @@ class Paths:
         return f"{API_PREFIX}/projects/{project_id}"
 
     @staticmethod
+    def project_reviews(project_id: int) -> str:
+        return f"{API_PREFIX}/projects/{project_id}/reviews"
+
+    @staticmethod
     def project_check(project_id: int) -> str:
         return f"{API_PREFIX}/projects/{project_id}/check"
 

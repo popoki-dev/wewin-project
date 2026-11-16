@@ -26,6 +26,14 @@ AppDialog {
     readonly property var codevOptions: (tick, codevs.map((c, i) => ({ value: i, text: codevLabel(c, i) })))
     readonly property bool editable: project === null || project.access.edit
     readonly property bool isNew: project === null
+    // True once anything is changed after opening; reviews act on the saved project, so
+    // they wait until the changes are saved.
+    property bool dirty: false
+    // Saved items the user may review now: [{kind, id}].
+    readonly property var reviewable: (tick, isNew ? [] : [].concat(
+        forecasts.filter(f => f.id && f.access && f.access.review).map(f => ({ kind: "forecast", id: f.id })),
+        codevs.filter(c => c.id && c.access && c.access.review).map(c => ({ kind: "codeveloper", id: c.id })),
+        payments.filter(x => x.id && x.access && x.access.review).map(x => ({ kind: "payment", id: x.id }))))
 
     function openNew() {
         project = null
@@ -40,7 +48,7 @@ AppDialog {
         fill(p)
         open()
     }
-    function fill(p) {
+    function fill(p, keepMessages) {
         confirmingDelete = false
         titleField.text = p.title
         startField.text = p.start_date
@@ -54,11 +62,11 @@ AppDialog {
             .concat(teams.map(t => ({ value: t.id, text: t.name })))
         teamBox.selectValue(p.team_id || (AuthViewModel.isOwner ? 0 : teams.length === 1 ? teams[0].id : -1))
         fillProjectOwners(p)
-        codevs = p.codevelopers.map(c => ({ id: c.id, nationality: c.nationality, name: c.name,
-                                            external_id: c.external_id, contact: c.contact }))
+        codevs = p.codevelopers.map(c => Object.assign(reviewOf(c), {
+            id: c.id, nationality: c.nationality, name: c.name, external_id: c.external_id, contact: c.contact }))
         const position = {}
         p.codevelopers.forEach((c, i) => position[c.id] = i)
-        payments = p.payments.map(x => ({
+        payments = p.payments.map(x => Object.assign(reviewOf(x), {
             id: x.id, paid_on: x.paid_on, description: x.description,
             amount: ProjectsViewModel.moneyInput(x.amount_cents),
             my_share: x.my_share_cents ? ProjectsViewModel.moneyInput(x.my_share_cents) : "",
@@ -66,10 +74,29 @@ AppDialog {
             payouts: x.payouts.map(o => ({ codeveloper_index: position[o.codeveloper_id],
                                            amount: ProjectsViewModel.moneyInput(o.amount_cents) }))
         }))
-        forecasts = p.revenue_forecasts.map(f => ({ year: String(f.year), month: f.month,
-                                                    amount: ProjectsViewModel.moneyInput(f.amount_cents) }))
+        forecasts = p.revenue_forecasts.map(f => Object.assign(reviewOf(f), {
+            id: f.id, year: String(f.year), month: f.month, amount: ProjectsViewModel.moneyInput(f.amount_cents) }))
         changed()
-        ProjectsViewModel.clearMessages()
+        dirty = false
+        if (!keepMessages) ProjectsViewModel.clearMessages()
+    }
+    function fieldEdited(field) {
+        dirty = true
+        ProjectsViewModel.fieldEdited(field)
+    }
+    function reviewOf(item) {
+        return { leader_review: item.leader_review, owner_review: item.owner_review, access: item.access }
+    }
+    // Saved rows the user may not change (reviewed above their level) open read-only.
+    function rowLocked(row) {
+        return !editable || (row.access !== undefined && row.access !== null && !row.access.edit)
+    }
+    function reviewActionFor(row) {
+        if (isNew || !row.id || !row.access) return ""
+        return row.access.review ? "review" : row.access.unreview ? "unreview" : ""
+    }
+    function reviewRow(kind, row, action) {
+        ProjectsViewModel.reviewItems(project.id, [{ kind: kind, id: row.id }], action)
     }
     // The people the user may make project owner, plus the current owner if they are not
     // among them (kept on save). New projects start with the user themselves.
@@ -98,8 +125,8 @@ AppDialog {
         const option = projectOwnerBox.model[projectOwnerBox.currentIndex]
         if (option && option.team_id && teamBox.visible && teamBox.model.some(t => t.value === option.team_id))
             teamBox.selectValue(option.team_id)
-        ProjectsViewModel.fieldEdited("projectOwner")
-        ProjectsViewModel.fieldEdited("team")
+        dialog.fieldEdited("projectOwner")
+        dialog.fieldEdited("team")
     }
     function codevLabel(c, i) {
         const parts = [c.name, c.external_id, c.nationality].filter(x => x && x.trim().length > 0)
@@ -107,6 +134,7 @@ AppDialog {
     }
     function changed() {
         tick++
+        dirty = true
         let cents = 0
         for (const row of payments) {
             const n = Number(String(row.amount).replace(/[$,\s]/g, ""))
@@ -117,10 +145,15 @@ AppDialog {
 
     // Co-developers and payments are added and edited in their own windows; the tables
     // here show them. Each change replaces the array, so the tables rebuild.
+    // An entry accepted unchanged keeps its row (and review); a changed one goes back to review.
+    function sameEntry(a, b, keys) {
+        return keys.every(k => JSON.stringify(a[k]) === JSON.stringify(b[k]))
+    }
     function codevAccepted(index, row) {
+        if (index >= 0 && sameEntry(codevs[index], row, ["nationality", "name", "external_id", "contact"])) return
         codevs = index < 0 ? codevs.concat([row]) : codevs.map((c, i) => i === index ? row : c)
         changed()
-        ProjectsViewModel.fieldEdited("codevelopers")
+        dialog.fieldEdited("codevelopers")
     }
     function removeCodev(index) {
         codevs = codevs.filter((_, i) => i !== index)
@@ -131,28 +164,32 @@ AppDialog {
                              amount: o.amount }))
         }))
         changed()
-        ProjectsViewModel.fieldEdited("codevelopers")
-        ProjectsViewModel.fieldEdited("payments")
+        dialog.fieldEdited("codevelopers")
+        dialog.fieldEdited("payments")
     }
     function paymentAccepted(index, row) {
+        if (index >= 0 && sameEntry(payments[index], row,
+                                    ["paid_on", "description", "amount", "my_share", "fund_location", "payouts"])) return
+        row = Object.assign({}, row, { leader_review: null, owner_review: null, access: null })
         payments = index < 0 ? payments.concat([row]) : payments.map((x, i) => i === index ? row : x)
         changed()
-        ProjectsViewModel.fieldEdited("payments")
+        dialog.fieldEdited("payments")
     }
     function removePayment(index) {
         payments = payments.filter((_, i) => i !== index)
         changed()
-        ProjectsViewModel.fieldEdited("payments")
+        dialog.fieldEdited("payments")
     }
     function openPayment(index) {
         paymentDialog.codevOptions = codevOptions
         if (index < 0) paymentDialog.openNew()
-        else paymentDialog.openFor(index, payments[index], !editable)
+        else paymentDialog.openFor(index, payments[index], rowLocked(payments[index]))
     }
     function setForecast(index, key, value) {
         forecasts[index][key] = value
+        forecasts[index].leader_review = forecasts[index].owner_review = null  // changed: back to review
         changed()
-        ProjectsViewModel.fieldEdited("forecasts")
+        dialog.fieldEdited("forecasts")
     }
     // A new row is for the month after the last one (this month when there is none).
     function addForecast() {
@@ -168,12 +205,12 @@ AppDialog {
         }
         forecasts = forecasts.concat([{ year: String(year), month: month, amount: "" }])
         changed()
-        ProjectsViewModel.fieldEdited("forecasts")
+        dialog.fieldEdited("forecasts")
     }
     function removeForecast(index) {
         forecasts = forecasts.filter((_, i) => i !== index)
         changed()
-        ProjectsViewModel.fieldEdited("forecasts")
+        dialog.fieldEdited("forecasts")
     }
     function save() {
         ProjectsViewModel.saveProject(
@@ -199,7 +236,7 @@ AppDialog {
             : project.team_name ? qsTr("%1 · created by %2").arg(project.team_name).arg(project.created_by_name || qsTr("a deleted account"))
             : qsTr("No team · created by %1").arg(project.created_by_name || qsTr("a deleted account"))
     iconName: confirmingDelete ? "alert" : "folder"
-    width: Math.min(880, (parent ? parent.width : 880) - 32)
+    width: Math.min(980, (parent ? parent.width : 980) - 32)
 
     onOpened: if (editable) titleField.forceFocus()
     onClosed: if (ProjectsViewModel.errorMessage) ProjectsViewModel.clearMessages()
@@ -216,6 +253,12 @@ AppDialog {
     Connections {
         target: ProjectsViewModel
         function onProjectSaved() { if (dialog.opened) dialog.close() }
+        // Show the new review state; the "reviewed" notice stays on screen.
+        function onProjectReviewed(p) {
+            if (!dialog.opened || dialog.isNew || p.id !== dialog.project.id) return
+            dialog.project = p
+            dialog.fill(p, true)
+        }
         function onProjectDeleted() { if (dialog.opened) dialog.close() }
     }
 
@@ -226,6 +269,41 @@ AppDialog {
         spacing: 14
 
         Banner { Layout.fillWidth: true; kind: "error"; text: dialog.opened ? dialog.lockReason() : "" }
+        Banner { Layout.fillWidth: true; kind: "success"; text: dialog.opened ? ProjectsViewModel.notice : "" }
+
+        // Items awaiting this user's review.
+        Rectangle {
+            visible: dialog.reviewable.length > 0
+            Layout.fillWidth: true
+            implicitHeight: reviewBar.implicitHeight + 20
+            radius: Theme.radius
+            color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.10)
+            border.width: 1
+            border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.35)
+            RowLayout {
+                id: reviewBar
+                anchors.fill: parent
+                anchors.margins: 10
+                anchors.leftMargin: 14
+                spacing: 10
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: dialog.dirty
+                          ? qsTr("%n item(s) await your review. Save your changes first to review them.", "", dialog.reviewable.length)
+                          : qsTr("%n item(s) await your review.", "", dialog.reviewable.length)
+                    color: Theme.text
+                    font.pixelSize: 13
+                }
+                AppButton {
+                    text: qsTr("Review all")
+                    implicitHeight: 32
+                    font.pixelSize: 12
+                    enabled: !dialog.dirty && !ProjectsViewModel.busy
+                    onClicked: ProjectsViewModel.reviewItems(dialog.project.id, dialog.reviewable, "review")
+                }
+            }
+        }
 
         AppTextField {
             id: titleField
@@ -236,7 +314,7 @@ AppDialog {
             field.readOnly: !dialog.editable
             field.maximumLength: ProjectsViewModel.titleMaxLength
             invalid: ProjectsViewModel.errorFields.indexOf("title") >= 0
-            field.onTextEdited: ProjectsViewModel.fieldEdited("title")
+            field.onTextEdited: dialog.fieldEdited("title")
         }
 
         RowLayout {
@@ -251,7 +329,7 @@ AppDialog {
                 field.maximumLength: 10
                 field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
                 invalid: ProjectsViewModel.errorFields.indexOf("startDate") >= 0
-                field.onTextEdited: ProjectsViewModel.fieldEdited("startDate")
+                field.onTextEdited: dialog.fieldEdited("startDate")
             }
             AppTextField {
                 id: endField
@@ -262,7 +340,7 @@ AppDialog {
                 field.maximumLength: 10
                 field.validator: RegularExpressionValidator { regularExpression: /[0-9-]{0,10}/ }
                 invalid: ProjectsViewModel.errorFields.indexOf("endDate") >= 0
-                field.onTextEdited: ProjectsViewModel.fieldEdited("endDate")
+                field.onTextEdited: dialog.fieldEdited("endDate")
             }
         }
 
@@ -286,7 +364,7 @@ AppDialog {
                 model: ProjectsViewModel.categories
                 box.enabled: dialog.editable
                 invalid: ProjectsViewModel.errorFields.indexOf("category") >= 0
-                onActivated: ProjectsViewModel.fieldEdited("totalBudget")  // the total may now be optional
+                onActivated: dialog.fieldEdited("totalBudget")  // the total may now be optional
             }
             AppComboBox {
                 id: teamBox
@@ -296,7 +374,7 @@ AppDialog {
                 label: qsTr("Team")
                 box.enabled: dialog.editable
                 invalid: ProjectsViewModel.errorFields.indexOf("team") >= 0
-                onActivated: ProjectsViewModel.fieldEdited("team")
+                onActivated: dialog.fieldEdited("team")
             }
         }
 
@@ -312,7 +390,7 @@ AppDialog {
                 field.readOnly: !dialog.editable
                 field.inputMethodHints: Qt.ImhFormattedNumbersOnly
                 invalid: ProjectsViewModel.errorFields.indexOf("totalBudget") >= 0
-                field.onTextEdited: ProjectsViewModel.fieldEdited("totalBudget")
+                field.onTextEdited: dialog.fieldEdited("totalBudget")
             }
             AppTextField {
                 id: monthlyField
@@ -322,7 +400,7 @@ AppDialog {
                 field.readOnly: !dialog.editable
                 field.inputMethodHints: Qt.ImhFormattedNumbersOnly
                 invalid: ProjectsViewModel.errorFields.indexOf("monthlyBudget") >= 0
-                field.onTextEdited: ProjectsViewModel.fieldEdited("monthlyBudget")
+                field.onTextEdited: dialog.fieldEdited("monthlyBudget")
             }
         }
 
@@ -367,6 +445,9 @@ AppDialog {
                 id: forecastRow
                 required property var modelData
                 required property int index
+                readonly property bool locked: dialog.rowLocked(modelData)
+                readonly property var status: (dialog.tick, ProjectsViewModel.reviewStatus(dialog.forecasts[index] || {}))
+                readonly property string reviewAction: dialog.reviewActionFor(modelData)
                 Layout.fillWidth: true
                 spacing: 8
                 AppTextField {
@@ -374,7 +455,7 @@ AppDialog {
                     Layout.maximumWidth: 100
                     placeholderText: qsTr("Year")
                     text: forecastRow.modelData.year
-                    field.readOnly: !dialog.editable
+                    field.readOnly: forecastRow.locked
                     field.maximumLength: 4
                     field.inputMethodHints: Qt.ImhDigitsOnly
                     field.validator: RegularExpressionValidator { regularExpression: /[0-9]{0,4}/ }
@@ -384,7 +465,7 @@ AppDialog {
                     id: monthBox
                     Layout.fillWidth: true
                     model: ProjectsViewModel.months
-                    box.enabled: dialog.editable
+                    box.enabled: !forecastRow.locked
                     Component.onCompleted: selectValue(forecastRow.modelData.month)
                     onActivated: dialog.setForecast(forecastRow.index, "month", monthBox.currentValue)
                 }
@@ -393,13 +474,27 @@ AppDialog {
                     Layout.maximumWidth: 170
                     placeholderText: qsTr("Expected (USD)")
                     text: forecastRow.modelData.amount
-                    field.readOnly: !dialog.editable
+                    field.readOnly: forecastRow.locked
                     field.inputMethodHints: Qt.ImhFormattedNumbersOnly
                     field.horizontalAlignment: TextInput.AlignRight
                     field.onTextEdited: dialog.setForecast(forecastRow.index, "amount", text)
                 }
+                ReviewChip {
+                    visible: !dialog.isNew
+                    Layout.preferredWidth: 78
+                    text: forecastRow.status.text
+                    tone: forecastRow.status.tone
+                }
+                LinkButton {
+                    visible: forecastRow.reviewAction !== "" && !dialog.dirty
+                    text: forecastRow.reviewAction === "review" ? qsTr("Review") : qsTr("Undo")
+                    font.pixelSize: 12
+                    onClicked: dialog.reviewRow("forecast", forecastRow.modelData, forecastRow.reviewAction)
+                }
                 RemoveButton {
                     visible: dialog.editable
+                    opacity: forecastRow.locked ? 0 : 1  // keeps its place so the rows line up
+                    enabled: !forecastRow.locked
                     label: qsTr("Remove month")
                     onClicked: dialog.removeForecast(forecastRow.index)
                 }
@@ -446,8 +541,13 @@ AppDialog {
             ]
             rows: dialog.codevs.map(c => [c.name || "—", c.external_id || "—", c.nationality || "—", c.contact || "—"])
             editable: dialog.editable
+            rowEditable: dialog.codevs.map(c => !dialog.rowLocked(c))
+            reviewStatus: dialog.isNew ? [] : dialog.codevs.map(c => ProjectsViewModel.reviewStatus(c))
+            reviewActions: dialog.codevs.map(c => dialog.reviewActionFor(c))
+            reviewHint: dialog.dirty ? "save" : ""
             removeLabel: qsTr("Remove co-developer (and their payouts)")
-            onOpenRow: i => codevDialog.openFor(i, dialog.codevs[i], !dialog.editable)
+            onReviewRow: (i, action) => dialog.reviewRow("codeveloper", dialog.codevs[i], action)
+            onOpenRow: i => codevDialog.openFor(i, dialog.codevs[i], dialog.rowLocked(dialog.codevs[i]))
             onRemoveRow: i => dialog.removeCodev(i)
         }
 
@@ -489,11 +589,11 @@ AppDialog {
             columns: [
                 { title: qsTr("Date"), width: 86 },
                 { title: qsTr("Description"), fill: true },
-                { title: qsTr("Received"), width: 96, right: true },
-                { title: qsTr("Your portion"), width: 96, right: true },
-                { title: qsTr("Paid out"), width: 90, right: true },
-                { title: qsTr("Remaining"), width: 96, right: true, strong: true },
-                { title: qsTr("Kept at"), width: 100 },
+                { title: qsTr("Received"), width: 88, right: true },
+                { title: qsTr("Your portion"), width: 88, right: true },
+                { title: qsTr("Paid out"), width: 80, right: true },
+                { title: qsTr("Remaining"), width: 88, right: true, strong: true },
+                { title: qsTr("Kept at"), width: 90 },
             ]
             rows: (dialog.tick, dialog.payments.map(x => {
                 const sum = ProjectsViewModel.paymentSummary(x)
@@ -502,6 +602,11 @@ AppDialog {
             }))
             dangerCells: (dialog.tick, dialog.payments.map(x => ProjectsViewModel.paymentSummary(x).over ? [5] : []))
             editable: dialog.editable
+            rowEditable: dialog.payments.map(x => !dialog.rowLocked(x))
+            reviewStatus: (dialog.tick, dialog.isNew ? [] : dialog.payments.map(x => ProjectsViewModel.reviewStatus(x)))
+            reviewActions: dialog.payments.map(x => dialog.reviewActionFor(x))
+            reviewHint: dialog.dirty ? "save" : ""
+            onReviewRow: (i, action) => dialog.reviewRow("payment", dialog.payments[i], action)
             removeLabel: qsTr("Remove payment")
             onOpenRow: i => dialog.openPayment(i)
             onRemoveRow: i => dialog.removePayment(i)
@@ -535,7 +640,10 @@ AppDialog {
                 font.pixelSize: 13
                 padding: 12
                 background: null
-                onTextChanged: if (length > ProjectsViewModel.detailsMaxLength) remove(ProjectsViewModel.detailsMaxLength, length)
+                onTextChanged: {
+                    if (length > ProjectsViewModel.detailsMaxLength) remove(ProjectsViewModel.detailsMaxLength, length)
+                    if (activeFocus) dialog.dirty = true
+                }
             }
         }
 

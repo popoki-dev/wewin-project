@@ -430,3 +430,150 @@ def test_members_enter_expected_revenue_until_checked(owner, leader, member):
     assert check(leader, p["id"]).status_code == 200
     r = put(member, Paths.project(p["id"]), body(revenue_forecasts=[]))
     assert r.status_code == 409
+
+
+# ------------------------------------------------------------ item reviews
+def review(session, project_id, items, action="review", level=None):
+    payload = {"action": action, "items": [{"kind": k, "id": i} for k, i in items]}
+    if level:
+        payload["level"] = level
+    return session.post(Paths.project_reviews(project_id), payload)
+
+
+def full_project(session, **overrides):
+    return create(session, codevelopers=[CODEVS[0]],
+                  payments=[split_payment(payouts=[{"codeveloper_index": 0, "amount_cents": 30_000}])],
+                  revenue_forecasts=[{"year": 2026, "month": 12, "amount_cents": 100_000}], **overrides)
+
+
+def refs(p):
+    return [("forecast", p["revenue_forecasts"][0]["id"]), ("codeveloper", p["codevelopers"][0]["id"]),
+            ("payment", p["payments"][0]["id"])]
+
+
+def awaiting(p):
+    return p["reviews_awaiting_leader"], p["reviews_awaiting_owner"]
+
+
+def resend(p, **changes):
+    """The project as the client would send it back, with `changes` applied."""
+    data = body(
+        codevelopers=[{k: c[k] for k in ("id", "nationality", "name", "external_id", "contact")}
+                      for c in p["codevelopers"]],
+        payments=[{"id": x["id"], "paid_on": x["paid_on"], "description": x["description"],
+                   "amount_cents": x["amount_cents"], "my_share_cents": x["my_share_cents"],
+                   "fund_location": x["fund_location"],
+                   "payouts": [{"codeveloper_index": [c["id"] for c in p["codevelopers"]].index(o["codeveloper_id"]),
+                                "amount_cents": o["amount_cents"]} for o in x["payouts"]]}
+                  for x in p["payments"]],
+        revenue_forecasts=[{k: f[k] for k in ("year", "month", "amount_cents")} for f in p["revenue_forecasts"]],
+    )
+    data.update(changes)
+    return data
+
+
+def test_items_go_through_leader_then_owner_review(owner, leader, member):
+    p = full_project(member)
+    assert awaiting(p) == (3, 0)  # new items: the list shows a badge
+    assert all(i["leader_review"] is None and i["owner_review"] is None
+               for i in p["codevelopers"] + p["payments"] + p["revenue_forecasts"])
+    assert review(member, p["id"], refs(p)).status_code == 403  # members do not review
+
+    p = review(leader, p["id"], refs(p)[:2]).json()
+    assert awaiting(p) == (1, 2)
+    assert p["revenue_forecasts"][0]["leader_review"]["by"] and p["revenue_forecasts"][0]["owner_review"] is None
+
+    p = review(owner, p["id"], refs(p)).json()  # the Owner may also review what no leader has yet
+    assert awaiting(p) == (0, 0)  # badge gone
+    assert all(i["owner_review"] for i in p["codevelopers"] + p["payments"] + p["revenue_forecasts"])
+
+
+def test_reviewed_items_are_locked_for_those_below(owner, leader, member):
+    p = full_project(member)
+    p = review(leader, p["id"], [refs(p)[1]]).json()  # the co-developer
+    # The member can no longer change or remove it, but can still edit what is not reviewed.
+    codev = {**resend(p)["codevelopers"][0], "name": "Renamed"}
+    r = put(member, Paths.project(p["id"]), resend(p, codevelopers=[codev]))
+    assert r.status_code == 409 and "reviewed by a Team Leader" in r.json()["detail"]
+    payment_only = resend(p)
+    payment_only["payments"][0]["payouts"] = []
+    r = put(member, Paths.project(p["id"]), resend(p, codevelopers=[], payments=payment_only["payments"]))
+    assert r.status_code == 409
+    forecast = [{"year": 2026, "month": 12, "amount_cents": 120_000}]
+    assert put(member, Paths.project(p["id"]), resend(p, revenue_forecasts=forecast)).status_code == 200
+
+    # The Owner reviews the payment: now the Team Leader cannot change it either.
+    p = owner.get(Paths.project(p["id"])).json()
+    p = review(owner, p["id"], [refs(p)[2]]).json()
+    changed = resend(p)
+    changed["payments"][0]["description"] = "Changed"
+    r = put(leader, Paths.project(p["id"]), changed)
+    assert r.status_code == 409 and "reviewed by the Owner" in r.json()["detail"]
+    assert put(leader, Paths.project(p["id"]), resend(p, payments=[])).status_code == 409  # nor delete it
+
+
+def test_resaving_unchanged_items_keeps_their_reviews(owner, leader, member):
+    p = full_project(member)
+    p = review(owner, p["id"], refs(p)).json()
+    r = put(member, Paths.project(p["id"]), resend(p, title="New title"))  # project fields only
+    assert r.status_code == 200, r.text
+    assert awaiting(r.json()) == (0, 0)
+
+
+def test_changing_a_reviewed_item_clears_its_reviews(owner, leader, member):
+    p = full_project(member)
+    p = review(leader, p["id"], refs(p)).json()
+    codev = {**resend(p)["codevelopers"][0], "contact": "aiko@example.com"}
+    out = put(leader, Paths.project(p["id"]), resend(p, codevelopers=[codev])).json()  # the leader may
+    assert out["codevelopers"][0]["leader_review"] is None and awaiting(out) == (1, 2)
+    p = review(owner, p["id"], refs(out)).json()
+    forecast = [{"year": 2026, "month": 12, "amount_cents": 1}]
+    out = put(owner, Paths.project(p["id"]), resend(p, revenue_forecasts=forecast)).json()  # the Owner may
+    assert out["revenue_forecasts"][0]["owner_review"] is None and awaiting(out) == (1, 0)
+
+
+def test_removing_reviews(owner, leader, member):
+    p = full_project(member)
+    item = [refs(p)[0]]
+    p = review(leader, p["id"], item).json()
+    p = review(leader, p["id"], item, action="unreview").json()  # a leader takes back their review
+    assert p["revenue_forecasts"][0]["leader_review"] is None
+    p = review(leader, p["id"], item).json()
+    p = review(owner, p["id"], item).json()
+    assert review(leader, p["id"], item, action="unreview").status_code == 409  # Owner-reviewed
+    assert review(leader, p["id"], item, action="unreview", level="owner").status_code == 403
+    assert review(leader, p["id"], item).status_code == 409
+    p = review(owner, p["id"], item, action="unreview").json()  # the Owner's own review first
+    assert p["revenue_forecasts"][0]["owner_review"] is None and p["revenue_forecasts"][0]["leader_review"]
+    p = review(owner, p["id"], item, action="unreview").json()
+    assert awaiting(p) == (3, 0)
+
+
+def test_item_access_tells_the_client_what_is_allowed(owner, leader, member):
+    p = full_project(member)
+    assert p["codevelopers"][0]["access"] == {"edit": True, "review": False, "unreview": False}
+    p = review(leader, p["id"], refs(p)).json()
+    assert p["codevelopers"][0]["access"] == {"edit": True, "review": False, "unreview": True}
+    mine = member.get(Paths.project(p["id"])).json()
+    assert mine["codevelopers"][0]["access"] == {"edit": False, "review": False, "unreview": False}
+    theirs = owner.get(Paths.project(p["id"])).json()
+    assert theirs["codevelopers"][0]["access"] == {"edit": True, "review": True, "unreview": True}
+
+
+def test_reviews_respect_teams_and_project_checks(client, owner, teams, leader, member):
+    add_member(owner, "lead2@example.com", teams["Ops"], role="team_leader")
+    other = first_login(client, "lead2@example.com", pc(3))
+    p = full_project(member)
+    assert review(other, p["id"], refs(p)).status_code == 404  # not their team's project
+    assert review(leader, p["id"], [("payment", 999_999)]).status_code == 404
+    assert check(owner, p["id"]).status_code == 200  # an Owner check locks the project for leaders
+    assert review(leader, p["id"], refs(p)).status_code == 409
+    assert review(owner, p["id"], refs(p)).status_code == 200
+
+
+def test_deleting_a_reviewer_keeps_the_review(owner, leader, member):
+    p = full_project(member)
+    review(leader, p["id"], refs(p))
+    assert delete(owner, Paths.member(leader.user["id"])).status_code == 200
+    p = owner.get(Paths.project(p["id"])).json()
+    assert p["codevelopers"][0]["leader_review"]["by"] is None and awaiting(p) == (0, 3)

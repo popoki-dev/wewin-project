@@ -103,6 +103,7 @@ Defaults per base role. Bundles can grant a Member or Team Leader more, within t
 | Add, edit, delete projects (incl. payment history) | own, until a Leader or Owner check | own teams' and own, until an Owner check | all, always |
 | Designate the project owner | always themselves | themselves or anyone on their teams | anyone |
 | Check projects (locks them for those below) | | own teams' (Leader check) | all (Owner check) |
+| Review expected revenue, co-developers and payments (each item; locks it for those below) | | own teams' (Leader review) | all (Owner review, with or without a Leader review) |
 | *Planned:* view/edit revenue | | ✓ | ✓ |
 
 Update this table as each module lands.

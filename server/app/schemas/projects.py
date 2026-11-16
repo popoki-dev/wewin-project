@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -130,7 +131,28 @@ class ProjectIn(BaseModel):
         return self
 
 
-class CodeveloperOut(BaseModel):
+class CheckOut(BaseModel):
+    at: datetime
+    by: str | None  # None if that account was deleted
+
+
+class ItemAccess(BaseModel):
+    """What the caller may do with one reviewed item now."""
+
+    edit: bool  # change or delete it (with the project)
+    review: bool  # place their review (Leader or Owner)
+    unreview: bool  # remove a review they may remove
+
+
+class ReviewedOut(BaseModel):
+    """Review state of an expected revenue row, co-developer or payment."""
+
+    leader_review: CheckOut | None
+    owner_review: CheckOut | None
+    access: ItemAccess
+
+
+class CodeveloperOut(ReviewedOut):
     id: int
     nationality: str
     name: str
@@ -144,7 +166,7 @@ class PayoutOut(BaseModel):
     amount_cents: int
 
 
-class PaymentOut(BaseModel):
+class PaymentOut(ReviewedOut):
     id: int
     paid_on: date
     description: str
@@ -166,15 +188,11 @@ class ProjectOwnerOption(BaseModel):
     team_id: int | None
 
 
-class RevenueForecastOut(BaseModel):
+class RevenueForecastOut(ReviewedOut):
+    id: int
     year: int
     month: int
     amount_cents: int
-
-
-class CheckOut(BaseModel):
-    at: datetime
-    by: str | None  # None if that account was deleted
 
 
 class ProjectAccess(BaseModel):
@@ -209,6 +227,27 @@ class ProjectOut(BaseModel):
     payments: list[PaymentOut]
     revenue_forecasts: list[RevenueForecastOut]  # by year and month
     expected_cents: int  # their total
+    # Items (revenue rows, co-developers, payments) waiting for each review; the list shows a badge.
+    reviews_awaiting_leader: int  # reviewed by no one yet
+    reviews_awaiting_owner: int  # reviewed by a Team Leader, not yet by the Owner
     created_at: datetime
     updated_at: datetime
     access: ProjectAccess
+
+
+ReviewKind = Literal["forecast", "codeveloper", "payment"]
+ReviewLevel = Literal["leader", "owner"]
+
+
+class ReviewItemIn(BaseModel):
+    kind: ReviewKind
+    id: int
+
+
+class ReviewIn(BaseModel):
+    """Review items of a project, or remove reviews. The caller's role decides the level they
+    review at; `level` picks which review to remove (default: the highest they may remove)."""
+
+    action: Literal["review", "unreview"] = "review"
+    items: list[ReviewItemIn] = Field(min_length=1, max_length=MAX_PAYMENTS + MAX_CODEVELOPERS + MAX_REVENUE_FORECASTS)
+    level: ReviewLevel | None = None

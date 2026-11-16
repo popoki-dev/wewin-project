@@ -281,3 +281,18 @@ Returns `422` if an `id` doesn't belong to this project, and `409` if the projec
 ### `DELETE /api/projects/{id}/check?level=leader|owner` 🔒
 `200` with the project. The Owner removes either check. A Team Leader removes the Leader check while the Owner hasn't checked the project.
 
+### `POST /api/projects/{id}/reviews` 🔒 Owner, or `projects.check` on their teams' projects
+Reviews individual items: expected revenue rows, co-developers and payments.
+```json
+{"action": "review" | "unreview", "items": [{"kind": "forecast" | "codeveloper" | "payment", "id": 12}], "level": null}
+```
+→ `200` with the project.
+
+- **Order:** a Team Leader of the project's team reviews first, then the Owner. The Owner may also review an item no Team Leader has reviewed, for example on projects with no team.
+- **Locks:** a Leader review locks the item for everyone except the Owner and the team's Team Leaders. An Owner review locks it for everyone except the Owner. Changing or deleting a locked item through `PUT /api/projects/{id}` returns **409**.
+- **Edits:** when someone still allowed to changes a reviewed item, its reviews are cleared and it needs reviewing again. Re-sending an item unchanged keeps its reviews.
+- **Removing a review:** `"unreview"` removes the Owner's own review, or else the Leader review. A Team Leader can remove only Leader reviews, and only while the Owner hasn't reviewed the item. Pass `level` to choose which review to remove.
+- **Errors:** **403** for members, or Team Leaders of other teams. **409** for a Team Leader when the project or the item is Owner-checked. **404** for an item that isn't part of the project.
+
+Each item in a project response carries `leader_review` and `owner_review` (`{"at", "by"}` or `null`) and `access` (`{"edit", "review", "unreview"}`). The project carries `reviews_awaiting_leader` (items no one has reviewed) and `reviews_awaiting_owner` (items reviewed by a Team Leader but not yet by the Owner). The project list shows a badge while either is above zero.
+

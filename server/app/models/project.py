@@ -3,11 +3,38 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Date, ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from .base import AwareDateTime, Base, utcnow
 from .team import Team
 from .user import User
+
+
+class Reviewable:
+    """An item that a Team Leader and then the Owner review (expected revenue rows,
+    co-developers, payments). A Leader review locks it for the user who entered it, an Owner
+    review for Team Leaders as well; changing a reviewed item clears its reviews."""
+
+    leader_reviewed_at: Mapped[datetime | None] = mapped_column(AwareDateTime, nullable=True)
+    leader_reviewed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    owner_reviewed_at: Mapped[datetime | None] = mapped_column(AwareDateTime, nullable=True)
+    owner_reviewed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    @declared_attr
+    def leader_reviewed_by(cls) -> Mapped[User | None]:
+        return relationship(foreign_keys=f"[{cls.__name__}.leader_reviewed_by_id]", lazy="selectin")
+
+    @declared_attr
+    def owner_reviewed_by(cls) -> Mapped[User | None]:
+        return relationship(foreign_keys=f"[{cls.__name__}.owner_reviewed_by_id]", lazy="selectin")
+
+    def clear_reviews(self) -> None:
+        self.leader_reviewed_at = self.leader_reviewed_by_id = self.leader_reviewed_by = None
+        self.owner_reviewed_at = self.owner_reviewed_by_id = self.owner_reviewed_by = None
 
 
 class Project(Base):
@@ -70,7 +97,7 @@ class Project(Base):
     )
 
 
-class ProjectCodeveloper(Base):
+class ProjectCodeveloper(Reviewable, Base):
     """Someone a project's income is shared with. At least one of nationality, name and
     ID is set; contact details are optional."""
 
@@ -88,7 +115,7 @@ class ProjectCodeveloper(Base):
         return self.name or self.external_id or self.nationality
 
 
-class ProjectPayment(Base):
+class ProjectPayment(Reviewable, Base):
     """One entry of a project's payment history: money received and how it was split.
 
     remaining = amount (total received) - my_share - the payouts to co-developers; never negative.
@@ -127,7 +154,7 @@ class PaymentPayout(Base):
     codeveloper: Mapped[ProjectCodeveloper] = relationship(lazy="selectin")
 
 
-class ProjectRevenueForecast(Base):
+class ProjectRevenueForecast(Reviewable, Base):
     """The revenue a project is expected to bring in one calendar month (whole US cents)."""
 
     __tablename__ = "project_revenue_forecasts"
